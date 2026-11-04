@@ -16,11 +16,21 @@ using Streamiz.Kafka.Net.SerDes;
 
 namespace Streamiz.Kafka.Net.Processors
 {
-    internal abstract class AbstractProcessor<K, V> : IProcessor<K, V>
+    /// <summary>
+    /// A node which records the end-to-end latency of the records it processes (KIP-613).
+    /// Only source and terminal (no child) nodes record it.
+    /// </summary>
+    internal interface IEndToEndLatencyNode
+    {
+        void MaybeRecordEndToEndLatency();
+    }
+
+    internal abstract class AbstractProcessor<K, V> : IProcessor<K, V>, IEndToEndLatencyNode
     {
         protected ILogger log = null;
         protected string logPrefix = "";
         protected Sensor droppedRecordsSensor;
+        private Sensor endToEndLatencySensor;
 
 
         public ProcessorContext Context { get; protected set; }
@@ -173,7 +183,11 @@ namespace Streamiz.Kafka.Net.Processors
                     Context.CurrentProcessor = null;
                     Parallel.ForEach(processors,
                         new ParallelOptions { MaxDegreeOfParallelism = Context.Configuration.MaxDegreeOfParallelism },
-                        action);
+                        processor =>
+                        {
+                            (processor as IEndToEndLatencyNode)?.MaybeRecordEndToEndLatency();
+                            action(processor);
+                        });
                 }
                 catch (AggregateException e)
                 {
@@ -185,9 +199,22 @@ namespace Streamiz.Kafka.Net.Processors
                 foreach (var processor in processors)
                 {
                     Context.CurrentProcessor = processor;
+                    (processor as IEndToEndLatencyNode)?.MaybeRecordEndToEndLatency();
                     action.Invoke(processor);
                 }
             }
+        }
+
+        /// <summary>
+        /// Record the end-to-end latency (wall clock time - record timestamp) if this node is a source or a terminal node.
+        /// </summary>
+        public void MaybeRecordEndToEndLatency()
+        {
+            if (endToEndLatencySensor == null || endToEndLatencySensor.NoRunnable || Context?.RecordContext == null)
+                return;
+
+            long now = Context.WallClockTime;
+            endToEndLatencySensor.Record(now - Context.Timestamp, now);
         }
 
         #endregion
@@ -202,6 +229,13 @@ namespace Streamiz.Kafka.Net.Processors
                 Context.Id,
                 Context.Metrics);
             
+            if (this is ISourceProcessor || Next.Count == 0)
+                endToEndLatencySensor = ProcessorNodeMetrics.RecordE2ELatencySensor(
+                    Thread.CurrentThread.Name,
+                    Context.Id,
+                    Name,
+                    Context.Metrics);
+
             foreach (var n in Next)
             {
                 Context.CurrentProcessor = n;

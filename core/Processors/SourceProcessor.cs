@@ -57,6 +57,7 @@ namespace Streamiz.Kafka.Net.Processors
 
         public override void Process(K key, V value)
         {
+            MaybeRecordEndToEndLatency();
             Forward(key, value);
             ProcessSensor.Record(1.0, Context.Timestamp);
         }

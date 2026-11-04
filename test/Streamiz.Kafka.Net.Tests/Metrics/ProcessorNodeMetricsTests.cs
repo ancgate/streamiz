@@ -115,5 +115,74 @@ namespace Streamiz.Kafka.Net.Tests.Metrics
                     ProcessorNodeMetrics.PROCESS + StreamMetricsRegistry.RATE_SUFFIX, 
                     StreamMetricsRegistry.PROCESSOR_NODE_LEVEL_GROUP)].Value > 0d);
         }
+
+        [Test]
+        public void RecordEndToEndLatencyOnSourceAndTerminalNodesTest()
+        {
+            var registry = new StreamMetricsRegistry(Guid.NewGuid().ToString(), MetricsRecordingLevel.INFO);
+            var source = new SourceProcessor<string, string>("e2e-source", "topic",
+                new StringSerDes(), new StringSerDes(), new FailOnInvalidTimestamp());
+            var filter = new KStreamFilterProcessor<string, string>((_, _, _) => true, false) {Name = "e2e-filter"};
+            var peek = new KStreamPeekProcessor<string, string>((_, _, _) => { }, false) {Name = "e2e-peek"};
+            source.AddNextProcessor(filter);
+            filter.AddNextProcessor(peek);
+
+            var ctx = new ProcessorContext(
+                UnassignedStreamTask.Create(id),
+                config,
+                new ProcessorStateManager(
+                    id,
+                    new List<TopicPartition> {topicPartition},
+                    null,
+                    new StoreChangelogReader(config, null, threadId, new StatestoreRestoreManager(null), registry),
+                    new MockOffsetCheckpointManager()
+                ), registry);
+            source.Init(ctx);
+
+            var serdes = new StringSerDes();
+            long now = DateTime.Now.GetMilliseconds();
+            // records are 1s, 3s and 5s old
+            foreach (var ageMs in new[] {1000L, 3000L, 5000L})
+            {
+                var r = new ConsumeResult<byte[], byte[]>
+                {
+                    Message = new Message<byte[], byte[]>
+                    {
+                        Key = serdes.Serialize("key", new SerializationContext()),
+                        Value = serdes.Serialize("value", new SerializationContext()),
+                        Timestamp = new Timestamp(now - ageMs, TimestampType.CreateTime)
+                    },
+                    Offset = ageMs,
+                    Topic = topicPartition.Topic,
+                    Partition = topicPartition.Partition
+                };
+                ctx.SetRecordMetaData(r);
+                source.Process("key", "value");
+            }
+
+            // sensors are registered with the name of the thread which initialized the processors
+            Sensor E2ESensor(string node) => registry
+                .GetThreadScopeSensor(Thread.CurrentThread.Name ?? StreamMetricsRegistry.UNKNOWN_THREAD)
+                .SingleOrDefault(s => s.Name.Contains(node) && s.Name.EndsWith(ProcessorNodeMetrics.RECORD_E2E_LATENCY));
+
+            double Metric(Sensor sensor, string suffix) => (double) sensor.Metrics[MetricName.NameAndGroup(
+                ProcessorNodeMetrics.RECORD_E2E_LATENCY + suffix,
+                StreamMetricsRegistry.PROCESSOR_NODE_LEVEL_GROUP)].Value;
+
+            // a node with children which is not a source does not record the end-to-end latency
+            Assert.IsNull(E2ESensor("e2e-filter"));
+
+            // allow some slack for the time spent in the test itself
+            const double slack = 2000;
+            foreach (var node in new[] {"e2e-source", "e2e-peek"})
+            {
+                var sensor = E2ESensor(node);
+                Assert.IsNotNull(sensor, node);
+                Assert.AreEqual(3, sensor.Metrics.Count());
+                Assert.That(Metric(sensor, StreamMetricsRegistry.MIN_SUFFIX), Is.InRange(1000d, 1000d + slack));
+                Assert.That(Metric(sensor, StreamMetricsRegistry.AVG_SUFFIX), Is.InRange(3000d, 3000d + slack));
+                Assert.That(Metric(sensor, StreamMetricsRegistry.MAX_SUFFIX), Is.InRange(5000d, 5000d + slack));
+            }
+        }
     }
 }

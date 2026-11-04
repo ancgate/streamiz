@@ -28,6 +28,15 @@ namespace Streamiz.Kafka.Net.Metrics.Internal
         internal static readonly string RETRY_AVG_DESCRIPTION = StreamMetricsRegistry.RATE_DESCRIPTION_PREFIX + RETRY_DESCRIPTION;
         internal static readonly string RETRY_MAX_DESCRIPTION = StreamMetricsRegistry.TOTAL_DESCRIPTION + RATE_DESCRIPTION_SUFFIX;
         
+        // KIP-613 : end-to-end latency metrics
+        internal static string RECORD_E2E_LATENCY = "record-e2e-latency";
+        internal static string RECORD_E2E_LATENCY_DESCRIPTION_SUFFIX =
+            "end-to-end latency of a record, measuring by comparing the record timestamp with the "
+            + "system time when it has been fully processed by the node";
+        internal static readonly string RECORD_E2E_LATENCY_AVG_DESCRIPTION = "The average " + RECORD_E2E_LATENCY_DESCRIPTION_SUFFIX;
+        internal static readonly string RECORD_E2E_LATENCY_MIN_DESCRIPTION = "The minimum " + RECORD_E2E_LATENCY_DESCRIPTION_SUFFIX;
+        internal static readonly string RECORD_E2E_LATENCY_MAX_DESCRIPTION = "The maximum " + RECORD_E2E_LATENCY_DESCRIPTION_SUFFIX;
+
         public static Sensor SuppressionEmitSensor(string threadId,
             TaskId taskId,
             string processorNodeId,
@@ -106,6 +115,27 @@ namespace Streamiz.Kafka.Net.Metrics.Internal
                 RETRY_AVG_DESCRIPTION,
                 RETRY_MAX_DESCRIPTION);
             
+            return sensor;
+        }
+
+        public static Sensor RecordE2ELatencySensor(
+            string threadId,
+            TaskId taskId,
+            string processorNodeId,
+            StreamMetricsRegistry metricsRegistry)
+        {
+            Sensor sensor = metricsRegistry.NodeLevelSensor(threadId, taskId, processorNodeId, RECORD_E2E_LATENCY,
+                RECORD_E2E_LATENCY_DESCRIPTION_SUFFIX, MetricsRecordingLevel.INFO);
+            var tags = metricsRegistry.NodeLevelTags(threadId, taskId.ToString(), processorNodeId);
+
+            SensorHelper.AddAvgAndMinAndMaxToSensor(sensor,
+                StreamMetricsRegistry.PROCESSOR_NODE_LEVEL_GROUP,
+                tags,
+                RECORD_E2E_LATENCY,
+                RECORD_E2E_LATENCY_AVG_DESCRIPTION,
+                RECORD_E2E_LATENCY_MAX_DESCRIPTION,
+                RECORD_E2E_LATENCY_MIN_DESCRIPTION);
+
             return sensor;
         }
     }
