@@ -35,12 +35,8 @@ Each feature lists what exists today, how it would be built, the files it touche
 2. ~~Possible null reference in `ExternalStreamThread`.~~ **Not reachable.** A call with no polled record never adds to the buffer, so it can't be the call that makes the buffer full.
 3. **Fixed:** `InnerExceptionHandler` returning `CONTINUE` replayed the failing record forever. This affected both the stream thread and the async (`MapAsync`...) thread. The failing record is now skipped when it is consumed again.
    - Fixing it also exposed a test-infrastructure bug, now fixed. The in-memory cluster's admin client hid `DeleteRecordsAsync` with `new` instead of overriding it, so every async commit in `ASYNC_CLUSTER_IN_MEMORY` tests threw `NotImplementedException`.
-4. **Azure remote store problems:**
-   - `Put(key, null)` stores null instead of deleting.
-   - `Range` uses a comparer the Azure SDK cannot translate (it only works against the mock), and it doesn't filter by `PartitionKey`.
-   - `PutAll` doesn't split into chunks of 100 entities, which Azure requires.
-   - `Delete` returns null instead of the old value.
-5. **`StateStoreMetrics.RestoreSensor` is defined but never recorded.**
+4. **Fixed:** Azure remote store problems. `Put(key, null)` didn't delete; `Range` relied on a filter the SDK can't translate and didn't filter by task; `PutAll` wasn't split into chunks of 100; `Delete` didn't return the old value. See Phase 8.
+5. **Fixed:** `StateStoreMetrics.RestoreSensor` was defined but never recorded. See Phase 1.
 
 ## Recommended order
 
@@ -53,7 +49,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 | 5. Time-aware state (done) | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
 | 6. Performance (done) | Batch cache eviction | Needs benchmarks; touches the hot path |
 | 7. Async V2 (done, opt-in) | ParallelConsumer-style async processing | Largest redesign; best done once DLQ exists |
-| 8. Remote storage | AWS (DynamoDB), GCP (Bigtable) + Azure fixes | Independent packages, can run in parallel with anything |
+| 8. Remote storage (done) | AWS (DynamoDB), GCP (Bigtable) + Azure fixes | Independent packages, can run in parallel with anything |
 | 9. Cluster features | Interactive Queries metadata, then standby replicas | Need a new metadata mechanism (no custom assignor) |
 | 10. Needs scoping | KEDA autoscaling, broadcast, network shuffle, cross-cluster, "Extensions" | Roadmap entries are one line each; design must be agreed first |
 
@@ -204,11 +200,9 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 - The session store can be queried from a running `KafkaStream`.
 - 21 DSL tests.
 
-**Open design question:** `Count` returns `long`, which can't be null in C#. So the tombstone for a merged session comes out as `0` instead of null, and `Count` followed by `Suppress(UntilWindowClose)` also emits those `0` records. Options:
-- Make session `Count` return `long?`. This breaks consistency with time-window `Count`.
-- Represent tombstones explicitly in `Change<T>` and in the sinks.
-
-`Aggregate` and `Reduce` with reference types aren't affected.
+**Count tombstones (decided: null):**
+- Session `Count` returns `IKTable<Windowed<K>, long?>`, with the new `NullableInt64SerDes` as its default value serde.
+- Merged sessions produce real null tombstones, and `Suppress(UntilWindowClose)` drops the ones for sessions that were never emitted.
 
 **Not done:** emit-final strategies (KIP-825). The default retention for sessions is one day, where Kafka uses gap + grace.
 
@@ -250,7 +244,11 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 **Versioned table sources:** `builder.Table(topic, InMemoryVersioned.As(...))` works. `Change<T>.IsLatest` exists, and Filter and MapValues pass it on.
 
-**Deviation from Kafka:** out-of-order updates go into the history but are not forwarded downstream. Kafka forwards them with `isLatest = false`, and its joins and aggregations drop them. The visible difference is mainly `ToStream()` output. Matching Kafka would also need joins and aggregations to check `IsLatest`.
+**Out-of-order updates (decided: as in Kafka):**
+- Out-of-order updates are forwarded downstream with `Change.IsLatest = false`, and `ToStream()` emits them.
+- These ignore them: table-table joins (both sides), `groupBy` (so `Count`, `Reduce` and `Aggregate` don't apply them), and the foreign-key join (both sides).
+- Records older than the history retention are still dropped.
+- Suppress doesn't keep the flag.
 
 **Not supported:**
 - Versioned stores for aggregations, global tables, or materialized Filter/MapValues; these throw a topology error.
@@ -331,39 +329,51 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 ---
 
-## Phase 8: Remote storage for AWS and GCP (M each)
+## Phase 8: Remote storage for AWS and GCP (done)
 
-**Template:** copy the shape of `remote/Streamiz.Kafka.Net.Azure.RemoteStorage`:
-- an `XRemoteStorage.As<K,V>()` helper returning `Materialized` with logging disabled;
-- an `XRemoteStorageSupplier : IKeyValueBytesStoreSupplier`;
-- an `XRemoteStorageOptions` class with `[StreamConfigProperty]` options;
-- `Internal/XStore : IKeyValueStore<Bytes,byte[]>` with `IsLocally = false`, plus a virtual client factory so tests can mock it;
-- a signed `InternalsVisibleTo` in `core/KafkaStream.cs`.
+### Azure fixes
 
-**Wiring:** add each new project to the `.sln`, the test csproj, `release.yml`, `update-version.sh`, the README package table and `docs/stores.md`.
+- `Put(key, null)` and null values in `PutAll` delete the entity.
+- `Delete` returns the old value.
+- Range and All:
+  - query only the task's partition, with a server-side filter on `PartitionKey`;
+  - filter and sort by key bytes in the application, since Azure Tables can't compare byte arrays;
+  - so each call reads the task's whole partition.
+- `PutAll` sends transactions of at most 100 entities.
+- Table names keep only letters and digits, start with a letter, and are 3 to 63 characters.
+- `ApproximateNumEntries` is still 0, now documented.
+- The test mock now rejects filters the real SDK can't translate.
 
-**AWS (`Streamiz.Kafka.Net.Aws.RemoteStorage`)**
-- DynamoDB, through `AWSSDK.DynamoDBv2`.
-- Partition key = task id, sort key = key bytes. Range queries are then native and ordered.
-- `BatchWriteItem` in chunks of 25.
+### AWS: `Streamiz.Kafka.Net.Aws.RemoteStorage` (DynamoDB, AWSSDK.DynamoDBv2 4.0.108)
 
-**GCP (`Streamiz.Kafka.Net.Gcp.RemoteStorage`)**
-- Bigtable, through `Google.Cloud.Bigtable.V2`.
-- Row key = `taskId#keyBytes`, which gives ordered prefix and range reads.
-- `MutateRows` for `PutAll`.
+- **Data model:** one table per store, partition key = task id, binary sort key = `0x00` + key bytes, so the order is the same as local stores.
+- **Operations:**
+  - `Delete` returns the old value (`ALL_OLD`).
+  - `PutAll` uses `BatchWriteItem` in batches of 25, retrying unprocessed items.
+  - Range and All are paginated queries in either direction.
+  - `ApproximateNumEntries` is an exact `COUNT` query.
+  - The table can be created on demand (pay per request).
+- **Options:** `aws.remote.storage.*`, covering region, service URL (for LocalStack), credentials and a table prefix.
+- **Tests:** 26.
 
-**Azure fixes (bug 4), done first so the template is correct:**
-- A null value means delete.
-- Filter by `PartitionKey`.
-- Do range filtering on the client, or use the key's lexicographic encoding for OData.
-- Split `PutAll` into chunks of 100.
-- Return the old value from `Delete`.
+### GCP: `Streamiz.Kafka.Net.Gcp.RemoteStorage` (Bigtable, Google.Cloud.Bigtable.V2 3.33.0)
 
-**Tests:**
-- Unit tests with mocked clients, like `AzureRemoteTests`.
-- Optional integration tests against LocalStack and the Bigtable emulator, behind a CI flag.
+- **Data model:**
+  - One shared table by default.
+  - Row key = length-prefixed application id, store name and task id, then the key bytes, so tasks, stores and applications are isolated.
+  - One cell per row.
+- **Operations:**
+  - Reverse ranges use reversed scans.
+  - `PutAll` uses `MutateRows` in batches.
+  - `Delete` reads, then deletes; it's not atomic, but the task is the only writer of its rows.
+  - The table can be created on demand.
+  - Supports the emulator.
+- **Test project:** the test project's Newtonsoft.Json pin moved from 13.0.3 to 13.0.4, which the Google packages require.
+- **Tests:** 16.
 
-**Later:** remote window and session suppliers.
+**Not done:**
+- No integration tests against LocalStack, the Bigtable emulator or Azurite.
+- No remote window or session stores.
 
 ---
 
