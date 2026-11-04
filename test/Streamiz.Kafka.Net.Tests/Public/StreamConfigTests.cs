@@ -113,6 +113,28 @@ namespace Streamiz.Kafka.Net.Tests.Public
         }
 
         [Test]
+        public void AtMostOnceGuaranteeConfiguresProducer()
+        {
+            var stream = new StreamConfig();
+            // from exactly-once: its producer settings must be overridden
+            stream.Guarantee = ProcessingGuarantee.EXACTLY_ONCE;
+            stream.Guarantee = ProcessingGuarantee.AT_MOST_ONCE;
+
+            Assert.AreEqual(ProcessingGuarantee.AT_MOST_ONCE, stream.Guarantee);
+            Assert.AreEqual(false, stream.EnableIdempotence);
+            Assert.AreEqual(0, stream.MessageSendMaxRetries);
+            Assert.AreEqual(StreamConfig.DEFAULT_COMMIT_INTERVAL_MS, stream.CommitIntervalMs);
+
+            var producerConfig = stream.ToProducerConfig();
+            Assert.AreEqual(false, producerConfig.EnableIdempotence);
+            Assert.AreEqual(0, producerConfig.MessageSendMaxRetries);
+
+            // producer retries can still be enabled explicitly
+            stream.MessageSendMaxRetries = 3;
+            Assert.AreEqual(3, stream.MessageSendMaxRetries);
+        }
+
+        [Test]
         public void StreamCompleteConfigProperty()
         {
             var stream = new StreamConfig();

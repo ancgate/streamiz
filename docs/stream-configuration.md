@@ -32,7 +32,11 @@ Kafka Streams applications can only communicate with a single Kafka cluster spec
 
 ### Guarantee
 
-The processing guarantee that should be used. Possible values are ```ProcessingGuarantee.AT_LEAST_ONCE``` (default) and ```ProcessingGuarantee.EXACTLY_ONCE```. Note that if exactly-once processing is enabled, the default for parameter commit.interval.ms changes to 100ms. Additionally, consumers are configured with isolation.level="read_committed" and producers are configured with retries=Int32.MAX_VALUE, enable.idempotence=true, and max.in.flight.requests.per.connection=5 per default. Note that by default exactly-once processing requires a cluster of at least three brokers what is the recommended setting for production. For development you can change this, by adjusting broker setting transaction.state.log.replication.factor and transaction.state.log.min.isr to the number of broker you want to use.
+The processing guarantee that should be used. Possible values are ```ProcessingGuarantee.AT_LEAST_ONCE``` (default), ```ProcessingGuarantee.EXACTLY_ONCE``` and ```ProcessingGuarantee.AT_MOST_ONCE```.
+
+With ```ProcessingGuarantee.AT_MOST_ONCE```, the consumed offsets are committed right after each poll, before the records are processed (for async processors like `MapAsync`, right after each record is consumed, before calling the external system). A record is never processed twice, but the records polled and not processed yet are lost if the application crashes. Producers are configured with enable.idempotence=false and retries=0, so an output record isn't written twice; a failed send goes to the `ProductionExceptionHandler`. You can set `MessageSendMaxRetries` after the guarantee to allow retries, with the risk of duplicated output records. The periodic commit (commit.interval.ms) still flushes the producer and the state stores.
+
+Note that if exactly-once processing is enabled, the default for parameter commit.interval.ms changes to 100ms. Additionally, consumers are configured with isolation.level="read_committed" and producers are configured with retries=Int32.MAX_VALUE, enable.idempotence=true, and max.in.flight.requests.per.connection=5 per default. Note that by default exactly-once processing requires a cluster of at least three brokers what is the recommended setting for production. For development you can change this, by adjusting broker setting transaction.state.log.replication.factor and transaction.state.log.min.isr to the number of broker you want to use.
 
 ### DefaultTimestampExtractor
 

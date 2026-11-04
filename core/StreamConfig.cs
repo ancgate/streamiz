@@ -29,7 +29,14 @@ namespace Streamiz.Kafka.Net
         /// <summary>
         /// Config value for parameter <see cref="IStreamConfig.Guarantee"/> for exactly-once processing guarantees.
         /// </summary>
-        EXACTLY_ONCE
+        EXACTLY_ONCE,
+        /// <summary>
+        /// Config value for parameter <see cref="IStreamConfig.Guarantee"/> for at-most-once processing guarantees.
+        /// The consumed offsets are committed right after each poll, before the records are processed: a record is never
+        /// processed twice, but the records polled and not processed yet are lost if the application crashes.
+        /// The producer doesn't retry (see <see cref="StreamConfig.MessageSendMaxRetries"/>), so an output record is not written twice.
+        /// </summary>
+        AT_MOST_ONCE
     }
 
     /// <summary>
@@ -283,7 +290,7 @@ namespace Streamiz.Kafka.Net
         ITimestampExtractor DefaultTimestampExtractor { get; set; }
 
         /// <summary>
-        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default) and <see cref="ProcessingGuarantee.EXACTLY_ONCE"/>. Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting 'transaction.state.log.replication.factor' and 'transaction.state.log.min.isr'.
+        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default), <see cref="ProcessingGuarantee.EXACTLY_ONCE"/> and <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>. Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting 'transaction.state.log.replication.factor' and 'transaction.state.log.min.isr'.
         /// </summary>
         ProcessingGuarantee Guarantee { get; set; }
 
@@ -2752,7 +2759,8 @@ namespace Streamiz.Kafka.Net
         }
 
         /// <summary>
-        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default) and <see cref="ProcessingGuarantee.EXACTLY_ONCE"/>
+        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default), <see cref="ProcessingGuarantee.EXACTLY_ONCE"/> and <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>.
+        /// With <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>, idempotence is disabled and <see cref="MessageSendMaxRetries"/> is set to 0 (you can change it after setting the guarantee, but a producer retry can write an output record twice).
         /// Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting
         /// <code>transaction.state.log.replication.factor</code> and <code>transaction.state.log.min.isr</code>.
         /// </summary>
@@ -2773,6 +2781,15 @@ namespace Streamiz.Kafka.Net
                 }
                 else if (value == ProcessingGuarantee.AT_LEAST_ONCE)
                     CommitIntervalMs = DEFAULT_COMMIT_INTERVAL_MS;
+                else if (value == ProcessingGuarantee.AT_MOST_ONCE)
+                {
+                    // set first: producer settings can't be changed while the guarantee is still exactly-once
+                    configProperties.AddOrUpdate(processingGuaranteeCst, value);
+                    EnableIdempotence = false;
+                    // a producer retry can write an output record twice
+                    MessageSendMaxRetries = 0;
+                    CommitIntervalMs = DEFAULT_COMMIT_INTERVAL_MS;
+                }
 
                 configProperties.AddOrUpdate(processingGuaranteeCst, value);
                 changeGuarantee = false;

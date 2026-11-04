@@ -248,6 +248,9 @@ namespace Streamiz.Kafka.Net.Processors
 
                                 DateTime n = DateTime.Now;
                                 var count = AddToTasks(records);
+                                // at-most-once: commit the polled records before processing them
+                                if (count > 0 && streamConfig.Guarantee == ProcessingGuarantee.AT_MOST_ONCE)
+                                    Manager.CommitPolledOffsets(records);
                                 if (count > 0)
                                 {
                                     log.LogDebug($"Add {count} records in tasks in {DateTime.Now - n}");

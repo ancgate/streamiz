@@ -263,6 +263,34 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     Producer.CommitTransaction(offsetsToCommit, Consumer.ConsumerGroupMetadata);
                 }
             }
+            // AT_MOST_ONCE : nothing to commit, offsets are committed when the records are polled (see CommitPolledOffsets),
+            // committing the processed offsets here would move them backwards
+        }
+
+        /// <summary>
+        /// At-most-once : commit the position after the polled records, before they are processed.
+        /// Only the partitions owned by an active task are committed.
+        /// </summary>
+        internal void CommitPolledOffsets(IEnumerable<ConsumeResult<byte[], byte[]>> records)
+        {
+            var offsets = records
+                .GroupBy(r => r.TopicPartition)
+                .Where(g => ActiveTaskFor(g.Key) != null)
+                .Select(g => new TopicPartitionOffset(g.Key, g.Max(r => r.Offset.Value) + 1))
+                .ToList();
+
+            if (!offsets.Any())
+                return;
+
+            try
+            {
+                Consumer.Commit(offsets);
+            }
+            catch (KafkaException kafkaException)
+            {
+                throw new TaskMigratedException(
+                    $"Consumer committing offsets failed, indicating the corresponding thread is no longer part of the group : {kafkaException.Message}");
+            }
         }
 
         internal int Process(long now)

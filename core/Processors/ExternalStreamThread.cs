@@ -131,6 +131,10 @@ namespace Streamiz.Kafka.Net.Processors
                     
                     try
                     {
+                        // at-most-once: commit the consumed record before calling the external system
+                        if (result != null && configuration.Guarantee == ProcessingGuarantee.AT_MOST_ONCE)
+                            consumer.Commit(new[] {new TopicPartitionOffset(result.TopicPartition, result.Offset + 1)});
+
                         ExternalProcessorTopologyExecutor processor = null;
 
                         if (result != null)
@@ -277,8 +281,12 @@ namespace Streamiz.Kafka.Net.Processors
 
             if (offsets.Any())
             {
-                var consumer = GetConsumer();
-                consumer.Commit(offsets);
+                // at-most-once: offsets are already committed when consumed, processed offsets are behind
+                if (configuration.Guarantee != ProcessingGuarantee.AT_MOST_ONCE)
+                {
+                    var consumer = GetConsumer();
+                    consumer.Commit(offsets);
+                }
 
                 // purge records offsets
                 if (currentDeleteTask == null || currentDeleteTask.IsCompleted)
