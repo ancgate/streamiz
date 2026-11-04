@@ -47,7 +47,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 | Phase | Features | Why this order |
 |---|---|---|
 | 1. Quick wins (done) | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
-| 2. Error handling | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
+| 2. Error handling (done) | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
 | 3. Windowing | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
 | 5. Time-aware state | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
@@ -122,53 +122,41 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 
 ---
 
-## Phase 2: Error handling
+## Phase 2: Error handling (done)
 
-### 2.1 Processing exception handler + dead letter queue (M)
+### 2.1 Processing exception handler + dead letter queue (done)
 
-**Today:**
-- Handlers exist for deserialization, production and "inner" errors.
-- There is no per-record processing handler (Kafka's KIP-1033), and `StreamTask.Process` has no try/catch.
-- There is no DLQ (KIP-1034).
-- `InnerExceptionHandler` returning `CONTINUE` now skips the failing record (bug 3, fixed). It still closes all tasks and rejoins the group, which is heavy for a single bad record. The per-record handler below avoids that.
+**`ProcessingExceptionHandler` (KIP-1033):**
+- Called when a processor or a DSL function throws while processing one record.
+- `CONTINUE` skips the record and keeps processing, without closing tasks or rejoining the group. The record counts as dropped.
+- `FAIL` (default) keeps today's behaviour: the exception goes to the stream thread, then the `InnerExceptionHandler`.
+- The handler gets an `ErrorHandlerContext`: source topic, partition, offset, timestamp, headers, raw key and value, processor name and task id.
+- If the handler itself throws, the original exception is raised.
+- Deserialization and production errors keep their own handlers.
 
-**Plan:**
-- **New per-record handler.** Add `ProcessingExceptionHandler(ErrorHandlerContext, record, Exception) → FAIL | CONTINUE`, configured in `StreamConfig`.
-  - `ErrorHandlerContext` holds topic, partition, offset, headers, processor node id and task id.
-- **Catch per record.** Add a try/catch around the per-record body in `StreamTask.Process`.
-  - On `CONTINUE`, the record counts as consumed (offset advances) and a dropped-records sensor is recorded.
-  - On `FAIL`, behaviour stays as today.
-- **DLQ config.** Add `DeadLetterQueueTopicName` (`errors.deadletterqueue.topic.name`).
-  - When it is set and any handler (deserialization, processing, production, async `SKIP`) returns `CONTINUE`, send the original source key/value bytes to the DLQ through the task's `RecordCollector`.
-  - Add headers: `__streamiz.errors.exception`, `.message`, `.stacktrace`, `.topic`, `.partition`, `.offset`.
-  - Under EOS, the DLQ write is part of the same transaction.
-- **Advanced hook.** Handlers can return extra `ProducerRecord`s to send as well.
-- **Docs.** Explain when to use the new per-record handler and when to use `InnerExceptionHandler`.
+**`DeadLetterQueueTopicName` (KIP-1034):**
+- Skipped source records are sent to this topic when the deserialization handler or the processing handler returns `CONTINUE`, or when an async processor's retry policy ends with `SKIP`.
+- Each record keeps its raw key, value, headers and timestamp, plus `__streams.errors.*` headers: exception, message, stacktrace, topic, partition, offset.
+- With exactly-once, the record is written in the task's transaction. Streamiz does not create the topic.
 
-**Files:**
-- `StreamConfig.cs`, `ExceptionHandlerResponse.cs`
-- `StreamTask.cs`, `AbstractProcessor.cs` (deserialize paths)
-- `RecordCollector.cs`, `StreamThread.cs`
-- `ExternalProcessorTopologyExecutor.cs`
+**Not covered:**
+- Production errors are not sent to the dead letter queue. They are reported asynchronously, so resending from the delivery callback needs its own design.
+- Global store sources only log that they can't send to the dead letter queue, because they have no producer.
 
-**Tests:**
-- New `ProcessingExceptionHandlerTests` and `DeadLetterQueueTests`, checking DLQ topic contents and headers through the test driver.
-- Extend the existing `*ExceptionHandlerTests`.
+**Found while testing:** each record is deserialized twice, once for the timestamp extractor and once for processing. So a `DeserializationExceptionHandler` is called twice per bad record; this was already the case before. The dead letter queue only sends from the processing path, so a record is sent once. Deserializing only once would be a good follow-up.
 
-### 2.2 At-most-once guarantee (S/M)
+**Tests:** `ProcessingExceptionHandlerTests` (7 tests).
 
-**Today:** `ProcessingGuarantee` has only `AT_LEAST_ONCE` and `EXACTLY_ONCE`. `StreamsProducer` throws for anything else.
+### 2.2 At-most-once guarantee (done)
 
-**Plan:**
-- Add `AT_MOST_ONCE`.
-- In `StreamThread`, right after a poll is added to the tasks, commit the polled positions synchronously, before processing.
-- The producer uses no idempotence and no retries. `TaskManager.CommitOffsetsOrTransaction` then becomes a no-op for offsets in this mode.
-- Make `StreamsProducer`, `RecordCollector` and `ExternalStreamThread` handle the new value.
-- Validate config: reject combining it with EOS-only settings.
-
-**Tests:**
-- `StreamConfigTests`.
-- A `TaskManagerTests` / `StreamThreadTests` case: crash after commit and before processing, and assert the record is not replayed.
+- New `ProcessingGuarantee.AT_MOST_ONCE`.
+- **When offsets are committed:**
+  - The stream thread commits each polled partition's next offset right after the poll, before processing.
+  - Periodic, revoke and close commits still flush the producer and stores and write checkpoints, but don't commit consumer offsets, so committed offsets never move backwards.
+  - The async thread commits each record before calling the external system.
+- **Producer settings:** setting the guarantee disables idempotence and sets `MessageSendMaxRetries = 0`, because a producer retry can write an output record twice. Users can raise retries afterwards and accept possible duplicates.
+- **Tests:** `AtMostOnceProcessingTests` restarts a thread after a crash. With at-most-once, nothing is processed again; with at-least-once, the failing record is processed again. Also config and producer tests.
+- **Not covered by tests:** at-most-once on the async thread (`TopologyTestDriver` forces at-least-once), and records lost on a rebalance.
 
 ### 2.3 Async bug fixes (done)
 
