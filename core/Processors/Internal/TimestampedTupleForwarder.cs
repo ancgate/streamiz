@@ -32,6 +32,13 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 processor?.Forward(key, new Change<V>(sendOldValues ? oldValue : default, newValue));
         }
 
+        // isLatest: false for an out-of-order record of a versioned table (KIP-914)
+        public void MaybeForward(K key, V newValue, V oldValue, bool isLatest)
+        {
+            if (!cachingEnabled)
+                processor?.Forward(key, new Change<V>(sendOldValues ? oldValue : default, newValue, isLatest));
+        }
+
         public void MaybeForward<VR>(K key, VR newValue, VR oldValue)
         {
             if (!cachingEnabled)

@@ -21,6 +21,9 @@ namespace Streamiz.Kafka.Net.Processors
                 return;
             }
 
+            if (SkipNonLatest(value))
+                return;
+
             VR newValue = default, oldValue = default;
             var valueAndTimestamp2 = valueGetter.Get(key);
             long resultTs;

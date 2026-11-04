@@ -1,4 +1,5 @@
-﻿using Streamiz.Kafka.Net.Errors;
+﻿using Microsoft.Extensions.Logging;
+using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Stream;
 using Streamiz.Kafka.Net.Table.Internal;
 using System.Collections.Generic;
@@ -22,6 +23,16 @@ namespace Streamiz.Kafka.Net.Processors
             if (key == null)
             {
                 throw new StreamsException("Record key for the grouping KTable should not be null.");
+            }
+
+            // KIP-914: an out-of-order record of a versioned table is not aggregated
+            if (!value.IsLatest)
+            {
+                log.LogDebug(
+                    "{LogPrefix}Skipping out-of-order record from versioned table while performing table group by. topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]",
+                    logPrefix, Context.Topic, Context.Partition, Context.Offset);
+                droppedRecordsSensor.Record();
+                return;
             }
 
             KeyValuePair<K1, V1> oldPair = value.OldValue == null ? default : mapper.Apply(key, value.OldValue, Context.RecordContext);

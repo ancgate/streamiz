@@ -70,17 +70,19 @@ namespace Streamiz.Kafka.Net.Processors
 
                 long putReturnCode = store.Put(key, value, Context.Timestamp);
 
-                // versioned store (KIP-914): a record which was not put (older than the history retention), or which is not
-                // the latest value of its key (out-of-order record, written in the history), doesn't change the table
-                if (putReturnCode != KeyValueStoreWrapper<K, V>.PUT_RETURN_CODE_IS_LATEST)
+                // versioned store (KIP-914): a record older than the history retention is not put, so it isn't forwarded
+                if (putReturnCode == VersionedKeyValueStoreReturnCodes.PUT_RETURN_CODE_NOT_PUT)
                 {
                     log.LogDebug(
-                        "{LogPrefix}Record (topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]) is not the latest value of its key in the versioned store {Store}, it is not forwarded",
+                        "{LogPrefix}Record (topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]) is older than the history retention of the versioned store {Store}, it is not forwarded",
                         logPrefix, Context.Topic, Context.Partition, Context.Offset, store.Name);
                     return;
                 }
 
-                tupleForwarder.MaybeForward(key, value, oldValue);
+                // an out-of-order record (written in the history of a versioned store) is forwarded with IsLatest = false;
+                // as in Kafka Streams, the old value is the latest value of the key (read before the put)
+                tupleForwarder.MaybeForward(key, value, oldValue,
+                    putReturnCode == KeyValueStoreWrapper<K, V>.PUT_RETURN_CODE_IS_LATEST);
             }
             else
             {

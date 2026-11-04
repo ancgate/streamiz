@@ -145,7 +145,14 @@ Versioned stores are supported to materialize **source KTables**:
 builder.Table("topic", RocksDbVersioned.As<string, string>("table-store", TimeSpan.FromMinutes(5)));
 ```
 
-With a versioned source table, an out-of-order record (older than the latest value of its key) is written in the history but doesn't change the table, so it is not forwarded downstream. A record older than the history retention is dropped. Joins and value getters read the latest value. Use `QueryableStoreTypes.VersionedKeyValueStore<K, V>()` for interactive queries and `TopologyTestDriver.GetVersionedKeyValueStore<K, V>(name)` in tests.
+With a versioned source table, an out-of-order record (older than the latest value of its key) is written in the history, and forwarded downstream marked as "not latest" (KIP-914), with the latest value of the key as old value. A record older than the history retention is dropped.
+
+- `ToStream()`, `MapValues` and `Filter` forward it like any other record (so it appears in `ToStream()` output, with its own timestamp).
+- Table-table joins (both sides, including foreign-key joins) and `GroupBy` (so `Count`, `Reduce`, `Aggregate`) ignore it: the table's latest value didn't change.
+- If a `MapValues` or `Filter` result is materialized, it is materialized as a (non-versioned) timestamped store: the out-of-order record is written in it, and is then forwarded as a latest record (as in Kafka Streams with a non-versioned downstream store).
+- Value getters read the latest value, and stream-table joins read the value as of the stream record's timestamp.
+
+Use `QueryableStoreTypes.VersionedKeyValueStore<K, V>()` for interactive queries and `TopologyTestDriver.GetVersionedKeyValueStore<K, V>(name)` in tests.
 
 Limitations:
 - versioned stores are not supported for global tables, aggregations or other materialized operations (a `TopologyException` is thrown),

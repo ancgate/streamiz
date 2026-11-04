@@ -42,7 +42,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
 
         [TestCase(false)]
         [TestCase(true)]
-        public void OutOfOrderRecordsAreWrittenInTheHistoryButNotForwarded(bool rocksDb)
+        public void OutOfOrderRecordsAreWrittenInTheHistoryAndForwardedAsNotLatest(bool rocksDb)
         {
             var config = Config();
             if (rocksDb)
@@ -59,11 +59,14 @@ namespace Streamiz.Kafka.Net.Tests.Processors
 
                 input.PipeInput("k", "v1", At(1_000));
                 input.PipeInput("k", "v3", At(3_000));
-                input.PipeInput("k", "v2", At(2_000)); // out-of-order: history only
+                input.PipeInput("k", "v2", At(2_000)); // out-of-order: written in the history, forwarded with IsLatest = false
                 input.PipeInput("k2", "x", At(500));   // another key, older than stream time but within the history retention
 
-                var results = output.ReadKeyValueList().Select(r => (r.Message.Key, r.Message.Value)).ToList();
-                CollectionAssert.AreEqual(new[] {("k", "v1"), ("k", "v3"), ("k2", "x")}, results);
+                // KIP-914: ToStream forwards the out-of-order record too, with its own timestamp
+                var records = output.ReadKeyValueList().ToList();
+                CollectionAssert.AreEqual(new[] {("k", "v1"), ("k", "v3"), ("k", "v2"), ("k2", "x")},
+                    records.Select(r => (r.Message.Key, r.Message.Value)).ToList());
+                Assert.AreEqual(2_000, records[2].Message.Timestamp.UnixTimestampMs);
 
                 var store = driver.GetVersionedKeyValueStore<string, string>("table-store");
                 Assert.IsNotNull(store);
@@ -100,7 +103,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
         }
 
         [Test]
-        public void OldValuesAndDownstreamOperationsSeeOnlyTheLatestValues()
+        public void OutOfOrderRecordsGoThroughMapValuesAndFilter()
         {
             var builder = new StreamBuilder();
             builder.Table("input", Versioned(false))
@@ -115,12 +118,82 @@ namespace Streamiz.Kafka.Net.Tests.Processors
 
             input.PipeInput("k", "a", At(1_000));
             input.PipeInput("k", "b", At(3_000));
-            input.PipeInput("k", "old", At(2_000)); // out-of-order: the table still is "b"
+            input.PipeInput("k", "old", At(2_000)); // out-of-order: forwarded with IsLatest = false, the table still is "b"
             input.PipeInput("k", "drop", At(4_000));
 
             var results = output.ReadKeyValueList().Select(r => r.Message.Value).ToList();
             // "drop" is filtered out: the filter forwards a tombstone
-            CollectionAssert.AreEqual(new[] {"A", "B", null}, results);
+            CollectionAssert.AreEqual(new[] {"A", "B", "OLD", null}, results);
+        }
+
+        [Test]
+        public void TableTableJoinIgnoresOutOfOrderRecordsOfBothSides()
+        {
+            var builder = new StreamBuilder();
+            var left = builder.Table("left", InMemoryVersioned.As<string, string>("left-store", HistoryRetention));
+            var right = builder.Table("right", InMemoryVersioned.As<string, string>("right-store", HistoryRetention));
+            left.Join(right, (l, r) => $"{l}-{r}").ToStream().To("output");
+
+            using var driver = new TopologyTestDriver(builder.Build(), Config());
+            var leftInput = driver.CreateInputTopic<string, string>("left");
+            var rightInput = driver.CreateInputTopic<string, string>("right");
+            var output = driver.CreateOutputTopic<string, string>("output");
+
+            rightInput.PipeInput("k", "r1", At(1_000));
+            leftInput.PipeInput("k", "a", At(1_000));   // a-r1
+            rightInput.PipeInput("k", "r3", At(3_000)); // a-r3
+            rightInput.PipeInput("k", "r2", At(2_000)); // right out-of-order: ignored
+            leftInput.PipeInput("k", "old", At(500));   // left out-of-order: ignored
+
+            CollectionAssert.AreEqual(new[] {"a-r1", "a-r3"},
+                output.ReadKeyValueList().Select(r => r.Message.Value).ToList());
+        }
+
+        [Test]
+        public void GroupByAggregationIgnoresOutOfOrderRecords()
+        {
+            var builder = new StreamBuilder();
+            builder.Table("input", Versioned(false))
+                .GroupBy((k, v, _) => KeyValuePair.Create(v, v))
+                .Count(InMemory.As<string, long>("count-store"))
+                .ToStream()
+                .To("output", new StringSerDes(), new Int64SerDes());
+
+            using var driver = new TopologyTestDriver(builder.Build(), Config());
+            var input = driver.CreateInputTopic<string, string>("input");
+
+            input.PipeInput("k1", "x", At(1_000)); // x = 1
+            input.PipeInput("k1", "y", At(3_000)); // x = 0, y = 1
+            input.PipeInput("k1", "x", At(2_000)); // out-of-order: k1 is still "y", nothing changes
+
+            var store = driver.GetKeyValueStore<string, long>("count-store");
+            Assert.AreEqual(0, store.Get("x"));
+            Assert.AreEqual(1, store.Get("y"));
+        }
+
+        [Test]
+        public void ForeignKeyJoinIgnoresOutOfOrderRecordsOfBothSides()
+        {
+            var builder = new StreamBuilder();
+            var orders = builder.Table("orders", InMemoryVersioned.As<string, string>("orders-store", HistoryRetention));
+            var products = builder.Table("products", InMemoryVersioned.As<string, string>("products-store", HistoryRetention));
+            orders.Join(products, order => order, (order, product) => $"{order}-{product}")
+                .ToStream()
+                .To("output");
+
+            using var driver = new TopologyTestDriver(builder.Build(), Config());
+            var orderInput = driver.CreateInputTopic<string, string>("orders");
+            var productInput = driver.CreateInputTopic<string, string>("products");
+            var output = driver.CreateOutputTopic<string, string>("output");
+
+            productInput.PipeInput("p1", "P1", At(1_000));
+            orderInput.PipeInput("o1", "p1", At(1_000));     // p1-P1
+            productInput.PipeInput("p1", "P1b", At(3_000));  // p1-P1b
+            productInput.PipeInput("p1", "P1old", At(2_000)); // product out-of-order: ignored
+            orderInput.PipeInput("o1", "p2", At(500));       // order out-of-order: ignored (o1 still joins p1)
+
+            CollectionAssert.AreEqual(new[] {"p1-P1", "p1-P1b"},
+                output.ReadKeyValueList().Select(r => r.Message.Value).ToList());
         }
 
         [Test]

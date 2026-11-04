@@ -51,6 +51,16 @@ namespace Streamiz.Kafka.Net.Table.Internal.ForeignKeyJoin
 
         public override void Process(K key, Change<V> change)
         {
+            // KIP-914: an out-of-order record of a versioned table is not joined
+            if (!change.IsLatest)
+            {
+                log.LogDebug(
+                    "{LogPrefix}Skipping out-of-order record from versioned table while performing table-table join. topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]",
+                    logPrefix, Context.Topic, Context.Partition, Context.Offset);
+                droppedRecordsSensor.Record();
+                return;
+            }
+
             // clear the hash of the previous record
             recordHash = null;
             recordHashComputed = false;
@@ -281,6 +291,16 @@ namespace Streamiz.Kafka.Net.Table.Internal.ForeignKeyJoin
             {
                 log.LogWarning(
                     "{LogPrefix}Skipping record due to null key. topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]",
+                    logPrefix, Context.Topic, Context.Partition, Context.Offset);
+                droppedRecordsSensor.Record();
+                return;
+            }
+
+            // KIP-914: an out-of-order record of a versioned table is not joined
+            if (!change.IsLatest)
+            {
+                log.LogDebug(
+                    "{LogPrefix}Skipping out-of-order record from versioned table while performing table-table join. topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]",
                     logPrefix, Context.Topic, Context.Partition, Context.Offset);
                 droppedRecordsSensor.Record();
                 return;

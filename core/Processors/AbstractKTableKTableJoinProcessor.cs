@@ -1,4 +1,5 @@
-﻿using Streamiz.Kafka.Net.Stream;
+﻿using Microsoft.Extensions.Logging;
+using Streamiz.Kafka.Net.Stream;
 using Streamiz.Kafka.Net.Table.Internal;
 
 namespace Streamiz.Kafka.Net.Processors
@@ -14,6 +15,19 @@ namespace Streamiz.Kafka.Net.Processors
             this.valueGetter = valueGetter;
             this.joiner = joiner;
             this.sendOldValues = sendOldValues;
+        }
+
+        // KIP-914: an out-of-order record of a versioned table (not the latest value of its key) is not joined
+        protected bool SkipNonLatest(Change<V1> value)
+        {
+            if (value.IsLatest)
+                return false;
+
+            log.LogDebug(
+                "{LogPrefix}Skipping out-of-order record from versioned table while performing table-table join. topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]",
+                logPrefix, Context.Topic, Context.Partition, Context.Offset);
+            droppedRecordsSensor.Record();
+            return true;
         }
 
         public override void Close()
