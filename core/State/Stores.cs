@@ -83,6 +83,53 @@ namespace Streamiz.Kafka.Net.State
             => new WindowStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
 
         /// <summary>
+        /// Create a default (persistent, RocksDB) <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier DefaultSessionStore(string name, TimeSpan retention)
+            => PersistentSessionStore(name, retention);
+
+        /// <summary>
+        /// Create a persistent (RocksDB) <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier PersistentSessionStore(string name, TimeSpan retention)
+        {
+            if (retention < TimeSpan.Zero)
+                throw new ArgumentException("retention cannot be negative");
+            return new RocksDbSessionBytesStoreSupplier(name, retention);
+        }
+
+        /// <summary>
+        /// Create an in-memory <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier InMemorySessionStore(string name, TimeSpan retention)
+        {
+            if (retention < TimeSpan.Zero)
+                throw new ArgumentException("retention cannot be negative");
+            return new InMemorySessionBytesStoreSupplier(name, retention);
+        }
+
+        /// <summary>
+        /// Creates a <see cref="IStoreBuilder{T}"/> that can be used to build a <see cref="ISessionStore{K, AGG}"/>.
+        /// </summary>
+        /// <param name="supplier">a <see cref="ISessionBytesStoreSupplier"/> (cannot be null)</param>
+        /// <param name="keySerdes">the key serde to use</param>
+        /// <param name="valueSerdes">the aggregate serde to use</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <returns>an instance of <see cref="IStoreBuilder{T}"/> than can build a <see cref="ISessionStore{K, AGG}"/></returns>
+        public static IStoreBuilder<ISessionStore<K, V>> SessionStoreBuilder<K, V>(ISessionBytesStoreSupplier supplier, ISerDes<K> keySerdes, ISerDes<V> valueSerdes)
+            => new SessionStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
+
+        /// <summary>
         /// Creates a <see cref="IStoreBuilder"/> that can be used to build a <see cref="ITimestampedKeyValueStore{K, V}"/>.
         /// </summary>
         /// <param name="supplier">a <see cref="IKeyValueBytesStoreSupplier"/> (cannot be null)</param>

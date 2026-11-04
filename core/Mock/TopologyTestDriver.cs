@@ -385,6 +385,16 @@ namespace Streamiz.Kafka.Net.Mock
             return null;
         }
 
+        /// <summary>
+        /// Get the <see cref="IReadOnlySessionStore{K, AGG}"/> with the given name.
+        /// </summary>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <param name="name">the name of the store</param>
+        /// <returns>the session store, or null if no <see cref="IReadOnlySessionStore{K, AGG}"/> has been registered with the given name</returns>
+        public IReadOnlySessionStore<K, V> GetSessionStore<K, V>(string name)
+            => behavior.GetStateStore<K, V>(name) as IReadOnlySessionStore<K, V>;
+
         #endregion
 
         #region Property

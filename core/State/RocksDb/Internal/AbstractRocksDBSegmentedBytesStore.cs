@@ -207,7 +207,8 @@ namespace Streamiz.Kafka.Net.State.Internal
 
         private IKeyValueEnumerator<Bytes, byte[]> Fetch(Bytes keyFrom, Bytes keyTo, long from, long to, bool forward)
         {
-            if (bytesComparer.Compare(keyFrom, keyTo) > 0)
+            // a null bound means no bound (session stores' key ranges)
+            if (keyFrom != null && keyTo != null && bytesComparer.Compare(keyFrom, keyTo) > 0)
             {
                 logger.LogWarning("Returning empty iterator for fetch with invalid key range: from > to. " +
                                "This may be due to range arguments set in the wrong order, " +
