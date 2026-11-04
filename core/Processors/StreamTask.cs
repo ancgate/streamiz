@@ -35,6 +35,7 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly string threadId;
         private readonly IWallClockTimeProvider wallClockTimeProvider;
         
+        private readonly Sensor droppedRecordsSensor;
         private Sensor closeTaskSensor;
         private Sensor activeBufferedRecordSensor;
         private Sensor processSensor;
@@ -72,7 +73,7 @@ namespace Streamiz.Kafka.Net.Processors
             idleStartTime = -1;
 
             eosEnabled = configuration.Guarantee == ProcessingGuarantee.EXACTLY_ONCE;
-            var droppedRecordsSensor = TaskMetrics.DroppedRecordsSensor(this.threadId, Id, this.streamMetricsRegistry);
+            droppedRecordsSensor = TaskMetrics.DroppedRecordsSensor(this.threadId, Id, this.streamMetricsRegistry);
             collector = new RecordCollector(logPrefix, configuration, id, producer, droppedRecordsSensor);
 
             Context = new ProcessorContext(this, configuration, stateMgr, streamMetricsRegistry)
@@ -441,15 +442,18 @@ namespace Streamiz.Kafka.Net.Processors
             var recordInfo = $"Topic:{record.Record.Topic}|Partition:{record.Record.Partition.Value}|Offset:{record.Record.Offset}|Timestamp:{record.Record.Message.Timestamp.UnixTimestampMs}";
 
             log.LogDebug($"{logPrefix}Start processing one record [{recordInfo}]");
-            long latency;
+            long latency = 0;
             try
             {
                 latency = ActionHelper.MeasureLatency(() => record.Processor.Process(record.Record));
             }
             catch (Exception e) when (e is not TaskMigratedException)
             {
-                FailedRecordInfo.Attach(e, record.Record);
-                throw;
+                if (!ContinueAfterProcessingException(record.Record, e))
+                {
+                    FailedRecordInfo.Attach(e, record.Record);
+                    throw;
+                }
             }
             log.LogDebug($"{logPrefix}Completed processing one record [{recordInfo}]");
 
@@ -459,6 +463,38 @@ namespace Streamiz.Kafka.Net.Processors
             processSensor.Record();
             processLatencySensor.Record(latency);
             activeBufferedRecordSensor.Record(Grouper.NumBuffered());
+            return true;
+        }
+
+        // KIP-1033: the ProcessingExceptionHandler decides whether the failed record is skipped (true) or the exception raised (false)
+        private bool ContinueAfterProcessingException(ConsumeResult<byte[], byte[]> record, Exception exception)
+        {
+            // deserialization and production errors have their own handlers
+            if (exception is DeserializationException or ProductionException ||
+                configuration.ProcessingExceptionHandler == null)
+                return false;
+
+            ExceptionHandlerResponse response;
+            try
+            {
+                response = configuration.ProcessingExceptionHandler(
+                    new ErrorHandlerContext(record, Context.CurrentProcessor?.Name, Id), exception);
+            }
+            catch (Exception handlerException)
+            {
+                log.LogError(handlerException,
+                    "{LogPrefix}The ProcessingExceptionHandler failed, the processing exception is raised", logPrefix);
+                return false;
+            }
+
+            if (response != ExceptionHandlerResponse.CONTINUE)
+                return false;
+
+            log.LogWarning(exception,
+                "{LogPrefix}Exception while processing record (Topic:{Topic}|Partition:{Partition}|Offset:{Offset}) in processor {Processor}. The ProcessingExceptionHandler returned CONTINUE, so this record is skipped",
+                logPrefix, record.Topic, record.Partition.Value, record.Offset.Value, Context.CurrentProcessor?.Name);
+            droppedRecordsSensor.Record();
+            DeadLetterQueue.SendIfConfigured(configuration, collector, record, exception, log, logPrefix);
             return true;
         }
 

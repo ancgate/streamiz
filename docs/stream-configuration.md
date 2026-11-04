@@ -209,6 +209,44 @@ Deserialization exception handling function called when deserialization exceptio
 
 Production exception handling function called when kafka produce exception is raise.
 
+### ProcessingExceptionHandler
+
+Exception handling function called when a processor, or one of your functions in the DSL (`Map`, `Filter`, `Peek`...), throws an exception while processing one record. It receives an `ErrorHandlerContext` (source topic, partition, offset, timestamp, headers, raw key and value, processor name, task id) and the exception.
+
+- `FAIL` (default): the exception is raised to the stream thread, which calls the `InnerExceptionHandler`.
+- `CONTINUE`: the record is skipped (and sent to the dead letter queue if `DeadLetterQueueTopicName` is set), and the task keeps processing the next records, without closing the tasks or rejoining the group.
+
+Deserialization and production errors are not given to this handler: they have their own handlers.
+
+``` csharp
+config.ProcessingExceptionHandler = (context, exception) =>
+{
+    logger.LogWarning(exception, "Skip record {Topic}/{Partition}/{Offset}", context.Topic, context.Partition, context.Offset);
+    return ExceptionHandlerResponse.CONTINUE;
+};
+```
+
+### DeadLetterQueueTopicName
+
+Name of the dead letter queue topic (`errors.deadletterqueue.topic.name`, default: none). When it is set, each source record skipped because a handler returned `CONTINUE` is sent to this topic:
+
+- the `DeserializationExceptionHandler` returned `CONTINUE`,
+- the `ProcessingExceptionHandler` returned `CONTINUE`,
+- an async processor (`MapAsync`, `ForeachAsync`...) ended its retry policy with `EndRetryBehavior.SKIP`.
+
+The record keeps its raw key, value, headers and timestamp. These headers describe the error:
+
+| Header | Content |
+| --- | --- |
+| `__streams.errors.exception` | Exception type |
+| `__streams.errors.message` | Exception message |
+| `__streams.errors.stacktrace` | Exception, with its stack trace |
+| `__streams.errors.topic` | Source topic |
+| `__streams.errors.partition` | Source partition |
+| `__streams.errors.offset` | Source offset |
+
+Streamiz does not create the topic, so create it before starting the application. With `EXACTLY_ONCE`, the record is written in the same transaction as the task's outputs. Production errors (`ProductionExceptionHandler`) are not sent to the dead letter queue.
+
 ### Logger
 
 This library uses Microsoft.Extensions.Logging.Abstractions for logging. To set logging for this library you need to set Logger property in your stream config instance.

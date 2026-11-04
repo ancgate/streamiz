@@ -142,8 +142,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 {
                     Headers = record.Message.Headers,
                     Timestamp = record.Message.Timestamp,
-                    Key = sourceProcessor.DeserializeKey(record).Bean,
-                    Value = sourceProcessor.DeserializeValue(record).Bean
+                    Key = sourceProcessor.DeserializeKey(record, false).Bean,
+                    Value = sourceProcessor.DeserializeValue(record, false).Bean
                 },
                 Partition = record.Partition
             };

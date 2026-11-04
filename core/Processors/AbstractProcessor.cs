@@ -11,6 +11,7 @@ using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Metrics;
 using Streamiz.Kafka.Net.Metrics.Internal;
 using Streamiz.Kafka.Net.Processors.Internal;
+using Streamiz.Kafka.Net.Kafka.Internal;
 using Streamiz.Kafka.Net.SerDes;
 
 
@@ -354,7 +355,7 @@ namespace Streamiz.Kafka.Net.Processors
             return Name.GetHashCode();
         }
 
-        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record)
+        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true)
         {
             try
             {
@@ -373,13 +374,15 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during key deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
+                    if (sendToDeadLetterQueue)
+                        DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }
 
         }
 
-        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record)
+        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true)
         {
             try
             {
@@ -399,6 +402,8 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during value deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
+                    if (sendToDeadLetterQueue)
+                        DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }
