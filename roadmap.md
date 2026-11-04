@@ -9,8 +9,8 @@
 - [x] KIP-450 : Sliding windows
 - [x] Session Windows
 - [x] Rename WithRecordTimestamp to AlterRecordTimestamp
-- [ ] Versioned State Store
-- [ ] https://cwiki.apache.org/confluence/display/KAFKA/KIP-923%3A+Add+A+Grace+Period+to+Stream+Table+Join
+- [x] Versioned State Store
+- [x] https://cwiki.apache.org/confluence/display/KAFKA/KIP-923%3A+Add+A+Grace+Period+to+Stream+Table+Join
 - [x] KIP-424 : Allow suppression of intermediate events based on wall clock time
 - [ ] Extensions Streamiz
 - [x] At-most-once processing guarantee

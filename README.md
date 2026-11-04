@@ -104,7 +104,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | Punctuate                                                    |              X                     |         X              |                                            |
 | KStream-KStream Join                                         |              X                     |         X              |                                            |
 | KTable-KTable Join                                           |              X                     |         X              |                                            |
-| KTable-KTable FK Join                                        |              X                     |                        | Planned                                    |
+| KTable-KTable FK Join                                        |              X                     |         X              |                                            |
 | KStream-KTable Join                                          |              X                     |         X              |                                            |
 | KStream-GlobalKTable Join                                    |              X                     |         X              |                                            |
 | External Async Processing                                    |                                    |         X              | V2 in coming                               |

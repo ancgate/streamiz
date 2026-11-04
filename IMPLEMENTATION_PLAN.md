@@ -49,8 +49,8 @@ Each feature lists what exists today, how it would be built, the files it touche
 | 1. Quick wins (done) | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
 | 2. Error handling (done) | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
 | 3. Windowing (done) | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
-| 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
-| 5. Time-aware state | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
+| 4. Joins (done) | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
+| 5. Time-aware state (done) | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
 | 6. Performance | Batch cache eviction | Needs benchmarks; touches the hot path |
 | 7. Async V2 | ParallelConsumer-style async processing | Largest redesign; best done once DLQ exists |
 | 8. Remote storage | AWS (DynamoDB), GCP (Bigtable) + Azure fixes | Independent packages, can run in parallel with anything |
@@ -214,80 +214,63 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 ---
 
-## Phase 4: KTable-KTable foreign-key join, KIP-213 (XL)
+## Phase 4: KTable-KTable foreign-key join, KIP-213 (done)
 
-**Today:** only the name constants exist.
+**API:** `IKTable.Join` / `LeftJoin(otherTable, foreignKeyExtractor, joiner[, materialized, named])`, in Func and `IValueJoiner` forms.
 
-**API:**
-- `IKTable<K,V>.Join<VR,KO,VO>(IKTable<KO,VO> other, Func<V,KO> foreignKeyExtractor, Func<V,VO,VR> joiner, Materialized ...)`
-- `LeftJoin` with the same signature.
+**Design:** Kafka's subscription/response design.
+- Two internal topics:
+  - `-subscription-registration-topic`, co-partitioned with the right table;
+  - `-subscription-response-topic`, co-partitioned with the left table.
+  - Internal topics can now be declared co-partitioned with source topics. Only the foreign-key join uses this, so existing topologies don't change.
+- A subscription store keyed by `len(fk) | fk | pk`. The prefix scan uses `Range` with a computed upper bound, so the store interfaces are unchanged.
+- Stale responses are dropped by comparing a Murmur3 128-bit hash of the left value (Kafka's seed).
+- It handles foreign-key changes, deletes on both sides, null foreign keys, and left-join null semantics.
 
-**Topology:** the same design as Kafka, built from existing pieces. `RepartitionNode` already shows how to add an internal topic, sink and source. There are two new internal topics:
-- `...-SUBSCRIPTION-REGISTRATION-topic`, keyed by foreign key and co-partitioned with the right table;
-- `...-SUBSCRIPTION-RESPONSE-topic`, keyed by primary key and co-partitioned with the left table.
+**Tests:** 33, including a multi-partition run that checks the internal topics' partition counts.
 
-**Left side (`SubscriptionSendProcessor`):**
-- On each left change, extract the old and new FK.
-- Send `SubscriptionWrapper{hash(value), instruction, primaryKey}`:
-  - a subscribe to the new FK;
-  - an unsubscribe to the old FK if it changed.
-
-**Right side, receiving subscriptions (`SubscriptionReceiveProcessor`):**
-- Store each subscription in a subscription store keyed by `CombinedKey(fk, pk)`.
-- The store's bytes layout is `len(fk) | fk | pk`.
-- Look up the right value and send a response.
-
-**Right side, on right-table updates (`ForeignTableJoinProcessor`):**
-- Scan the subscription store for the FK prefix and send a response for each matching PK.
-- This needs a **prefix scan** on stores. Add `PrefixScan` to `IReadOnlyKeyValueStore` (RocksDB has it natively; in-memory can use `Range` on the sorted map). Or build it on the existing `Range(prefix, prefix+0xFF…)` as a first step.
-
-**Left side, receiving responses (`ResponseJoinProcessor`):**
-- Drop the response if the hash no longer matches the current left value (stale).
-- Otherwise call the joiner and forward.
-- Left join emits `joiner(v, null)` when there is no right value.
-
-**Supporting pieces:**
-- `SubscriptionWrapper` / `SubscriptionResponseWrapper` / `CombinedKey` serdes.
-- Murmur3 128-bit value hash (a small, self-contained port).
-- Internal topic partition counts come from the source tables through `CopartitionSources`.
-
-**Tests:**
-- Port Kafka's `KTableKTableForeignKeyJoinIntegrationTest` scenarios to `TopologyTestDriver`: FK changes, deletes on both sides, left join with nulls, out-of-order responses.
-- A multi-partition test using `ASYNC_CLUSTER_IN_MEMORY`.
+**Not done:**
+- `TableJoined` (custom partitioners) and the `(K, V) => KO` extractor overload.
+- The wire format follows Kafka's layout but isn't byte-compatible with it.
 
 ---
 
-## Phase 5: Versioned stores and stream-table join grace
+## Phase 5: Versioned stores and stream-table join grace (done)
 
-### 5.1 Versioned key-value store, KIP-889 (L)
+### 5.1 Versioned key-value store, KIP-889 (done)
 
-**Today:** nothing.
+**API:**
+- `IVersionedKeyValueStore<K,V>`: `Put(key, value, timestamp)` returns Kafka 3.6's return codes; also `Delete`, `Get(key)` and `Get(key, asOfTimestamp)`.
+- In-memory and RocksDB implementations. RocksDB keeps a latest-value store plus time segments for older versions.
+- Changelog logging, a metered layer, batch restore, `Stores.*Versioned*`, `InMemoryVersioned.As` / `RocksDbVersioned.As`, `QueryableStoreTypes.VersionedKeyValueStore` and `TopologyTestDriver.GetVersionedKeyValueStore`.
 
-**Plan:**
-- New interface `IVersionedKeyValueStore<K,V>` with:
-  - `Put(key, value, timestamp)`
-  - `Get(key)` (latest)
-  - `Get(key, asOfTimestamp)`
-  - `Delete(key, timestamp)`
-  - `HistoryRetention`
-- Start with **`InMemoryVersionedKeyValueStore`**: a sorted map from key to a timestamp-ordered list of versions, pruned by history retention.
-- Then add **`RocksDbVersionedKeyValueStore`**: a "latest value" column family plus timestamp segments, following Kafka's layout.
-- Logging and metering wrappers, `Stores.PersistentVersionedKeyValueStore`, `Materialized` support.
-- Source KTables can be materialized as versioned. `TableSourceNode` today assumes timestamped key-value only; relax that check.
-- Add `Change<T>.IsLatest` so downstream processors ignore out-of-order updates.
+**Rules:**
+- Puts older than stream time − history retention are refused.
+- The changelog is compacted, with `min.compaction.lag.ms` = retention + the window changelog additional retention.
 
-**Tests:** store tests (get-as-of, retention pruning, out-of-order puts) and KTable source tests with versioned materialization.
+**Versioned table sources:** `builder.Table(topic, InMemoryVersioned.As(...))` works. `Change<T>.IsLatest` exists, and Filter and MapValues pass it on.
 
-### 5.2 KIP-923: grace period for stream-table joins (M, needs 5.1)
+**Deviation from Kafka:** out-of-order updates go into the history but are not forwarded downstream. Kafka forwards them with `isLatest = false`, and its joins and aggregations drop them. The visible difference is mainly `ToStream()` output. Matching Kafka would also need joins and aggregations to check `IsLatest`.
 
-**Plan:**
-- Add `Joined.WithGracePeriod(TimeSpan)` / `StreamTableJoinProps`.
-- If a grace period is set, the table must be versioned. Validate this when the topology is built.
-- `StreamTableJoinNode` adds a time-ordered buffer store on the stream side, based on the existing `ITimeOrderedKeyValueBuffer` design but storing stream records.
-- `KStreamKTableJoinProcessor` buffers each record until `streamTime - grace` passes it, then joins with `versionedGetter.Get(key, record.Timestamp)`.
-- Records later than the grace period are joined right away, as today.
+**Not supported:**
+- Versioned stores for aggregations, global tables, or materialized Filter/MapValues; these throw a topology error.
+- After a restart without restoration, the RocksDB store's retention check is lenient until a new record arrives.
 
-**Tests:** extend `KStreamTableJoinTests` and `StreamTableJoinTimestampSynchronizationIntegrationTests` with out-of-order table updates.
+### 5.2 KIP-923: grace period for stream-table joins (done)
+
+**API:** `StreamTableJoinProps.WithGracePeriod(TimeSpan)`. The table must be a versioned source table, and the grace period can't be larger than its history retention; both are checked when the topology is built.
+
+**How it works:**
+- Stream records wait in a time-ordered buffer, backed by a changelog and restored on restart.
+- They are joined with the table value as of their own timestamp once stream time − grace passes them. Records older than that are joined right away.
+- With a versioned table, the join always reads the value as of the stream record's timestamp, even without a grace period (KIP-914).
+
+**Tests:** 13, including a thread restart that restores the buffer.
+
+**Differences from Kafka:**
+- The buffer is in memory, restored from its changelog; Kafka uses a RocksDB buffer.
+- The buffer has no metrics.
+- A grace period on a table derived through Filter or MapValues isn't supported.
 
 ---
 
