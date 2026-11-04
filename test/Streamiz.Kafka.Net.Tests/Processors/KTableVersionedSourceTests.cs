@@ -124,7 +124,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
         }
 
         [Test]
-        public void StreamTableJoinReadsTheLatestValue()
+        public void StreamTableJoinReadsTheValueAsOfTheStreamRecordTimestamp()
         {
             var builder = new StreamBuilder();
             var table = builder.Table("table", Versioned(false));
@@ -142,8 +142,9 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             tableInput.PipeInput("k", "t2", At(2_000)); // history only
             streamInput.PipeInput("k", "s", At(2_500));
 
-            // without a grace period (KIP-923), the join reads the latest value of the table
-            Assert.AreEqual("s-t3", output.ReadKeyValue().Message.Value);
+            // KIP-914: with a versioned table, the join reads the table value as of the stream record's timestamp
+            // (2 500 => t2, valid from 2 000 to 3 000), even without a grace period
+            Assert.AreEqual("s-t2", output.ReadKeyValue().Message.Value);
         }
 
         [Test]

@@ -373,6 +373,27 @@ Input records for the stream with a null key or a null value are ignored and do 
 Input records for the table with a null value are interpreted as tombstones for the corresponding key, which indicate the deletion of the key from the table. Tombstones do not trigger the join.
 For each input record on the left side that does not have any match on the right side, the ValueJoiner will be called with joiner(leftRecord.value, null); this explains the row with timestamp=3 in the table below, which lists [A, null] in the LEFT JOIN column.
 
+### Versioned tables and grace period (KIP-914, KIP-923)
+
+When the table is materialized in a versioned store (`InMemoryVersioned.As` / `RocksDbVersioned.As`), each stream record is joined with the table value valid at the stream record's timestamp, not with the latest value.
+
+To also handle out-of-order stream records, or stream records which arrive before the table update they should see, add a grace period to the join:
+
+```csharp
+var table = builder.Table("topic2", InMemoryVersioned.As<string, string>("table-store", TimeSpan.FromMinutes(10)));
+
+builder.Stream<string, string>("topic1")
+    .Join(table, (v1, v2) => $"{v1}-{v2}",
+        new StreamTableJoinProps<string, string, string>(new StringSerDes(), new StringSerDes(), new StringSerDes())
+            .WithGracePeriod(TimeSpan.FromSeconds(30)))
+    .To("output-join");
+```
+
+- Stream records are kept in a buffer store (`<join name>-buffer`, with a changelog topic) until the stream time reaches their timestamp plus the grace period. They are then joined in timestamp order with the table value valid at their timestamp, and keep their timestamp and headers.
+- A stream record older than the stream time minus the grace period is joined right away.
+- The table must be a versioned source table, and the grace period can't be larger than its history retention; otherwise the topology can't be built.
+- The buffer is kept in memory (restored from its changelog after a restart), so it must fit the records of one grace period.
+
 ## IKStream-IGlobalKTable Join
 
 IKStream-IGlobalKTable joins are always non-windowed joins. They allow you to perform table lookups against a IGlobalKTable (entire changelog stream) upon receiving a new record from the IKStream (record stream). An example use case would be “star queries” or “star joins”, where you would enrich a stream of user activities (IKStream) with the latest user profile information (IGlobalKTable) and further context information (further GlobalKTables). However, because GlobalKTables have no notion of time, a IKStream-IGlobalKTable join is not a temporal join, and there is no event-time synchronization between updates to a IGlobalKTable and processing of IKStream records.

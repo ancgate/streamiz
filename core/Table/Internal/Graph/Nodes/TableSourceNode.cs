@@ -14,6 +14,11 @@ namespace Streamiz.Kafka.Net.Table.Internal.Graph.Nodes
     {
         string SourceName { get; }
         string NodeName { get; }
+
+        /// <summary>
+        /// History retention of the table's versioned store, null if the table is not versioned
+        /// </summary>
+        long? VersionedHistoryRetentionMs { get; }
     }
 
     internal class TableSourceNode<K, V, S> : StreamSourceNode<K, V>, ITableSourceNode
@@ -39,6 +44,11 @@ namespace Streamiz.Kafka.Net.Table.Internal.Graph.Nodes
         public string SourceName => sourceName;
 
         public string NodeName => this.streamGraphNode;
+
+        public long? VersionedHistoryRetentionMs =>
+            (materialized as Materialized<K, V, IKeyValueStore<Bytes, byte[]>>)?.StoreSupplier is State.Supplier.IVersionedBytesStoreSupplier supplier
+                ? supplier.HistoryRetentionMs
+                : null;
 
         public void ReuseSourceTopicForChangeLog(bool shouldReuseSourceTopicForChangelog)
         {

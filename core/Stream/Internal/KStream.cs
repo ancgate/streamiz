@@ -1,4 +1,6 @@
 ﻿using Streamiz.Kafka.Net.Crosscutting;
+using Streamiz.Kafka.Net.Errors;
+using Streamiz.Kafka.Net.Table.Internal.Graph.Nodes;
 using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.Processors.Internal;
 using Streamiz.Kafka.Net.SerDes;
@@ -696,7 +698,8 @@ namespace Streamiz.Kafka.Net.Stream.Internal
       new WrappedValueJoiner<V, V0, VR>(valueJoiner),
                 streamTableJoinProps.RightValueSerdes,
                 null,
-                named);
+                named,
+                streamTableJoinProps.GracePeriod);
         }
 
         public IKStream<K, VR> Join<V0, VR>(IKTable<K, V0> table, IValueJoiner<V, V0, VR> valueJoiner,
@@ -709,7 +712,8 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 valueJoiner,
                 streamTableJoinProps.RightValueSerdes,
                 null,
-                named);
+                named,
+                streamTableJoinProps.GracePeriod);
         }
 
         public IKStream<K, VR> Join<V0, VR, V0S, VRS>(IKTable<K, V0> table, Func<V, V0, VR> valueJoiner, string named = null)
@@ -732,9 +736,9 @@ namespace Streamiz.Kafka.Net.Stream.Internal
             where VRS : ISerDes<VR>, new ()
             => Join(table, valueJoiner, new V0S(), new VRS(), named);
 
-        private IKStream<K, VR> Join<V0, VR>(IKTable<K, V0> table, IValueJoiner<V, V0, VR> valueJoiner, ISerDes<V0> valueSerdes, ISerDes<VR> otherValueSerdes, string named = null)
+        private IKStream<K, VR> Join<V0, VR>(IKTable<K, V0> table, IValueJoiner<V, V0, VR> valueJoiner, ISerDes<V0> valueSerdes, ISerDes<VR> otherValueSerdes, string named = null, TimeSpan? gracePeriod = null)
         {
-            var joined = new Joined<K, V, V0>(KeySerdes, ValueSerdes, valueSerdes, named);
+            var joined = new Joined<K, V, V0>(KeySerdes, ValueSerdes, valueSerdes, named, gracePeriod);
 
             if (RepartitionRequired)
             {
@@ -759,7 +763,8 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 new WrappedValueJoiner<V, VT, VR>(valueJoiner),
                 streamTableJoinProps.RightValueSerdes,
                 null,
-                named);
+                named,
+                streamTableJoinProps.GracePeriod);
         }
 
         public IKStream<K, VR> LeftJoin<VT, VR>(IKTable<K, VT> table, IValueJoiner<V, VT, VR> valueJoiner,
@@ -772,7 +777,8 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 valueJoiner,
                 streamTableJoinProps.RightValueSerdes,
                 null,
-                named);
+                named,
+                streamTableJoinProps.GracePeriod);
         }
         
         public IKStream<K, VR> LeftJoin<VT, VR, VTS, VRS>(IKTable<K, VT> table, Func<V, VT, VR> valueJoiner, string named = null)
@@ -795,9 +801,9 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 LeftJoin(table, valueJoiner, null, null, named);
         }
 
-        private IKStream<K, VR> LeftJoin<VT, VR>(IKTable<K, VT> table, IValueJoiner<V, VT, VR> valueJoiner, ISerDes<VT> valueSerdes, ISerDes<VR> otherValueSerdes, string named = null)
+        private IKStream<K, VR> LeftJoin<VT, VR>(IKTable<K, VT> table, IValueJoiner<V, VT, VR> valueJoiner, ISerDes<VT> valueSerdes, ISerDes<VR> otherValueSerdes, string named = null, TimeSpan? gracePeriod = null)
         {
-            var joined = new Joined<K, V, VT>(KeySerdes, ValueSerdes, valueSerdes, named);
+            var joined = new Joined<K, V, VT>(KeySerdes, ValueSerdes, valueSerdes, named, gracePeriod);
             
             if (RepartitionRequired)
             {
@@ -1405,16 +1411,34 @@ namespace Streamiz.Kafka.Net.Stream.Internal
             var allSourceNodes = EnsureCopartitionWith((AbstractStream<K, V0>)table);
 
             string name = new Named(joined.Name).OrElseGenerateWithPrefix(builder, leftJoin ? KStream.LEFTJOIN_NAME : KStream.JOIN_NAME);
+
+            // KIP-923: with a grace period, the stream records are buffered, then joined with the versioned table as of their timestamp
+            long gracePeriodMs = (long) (joined.GracePeriod?.TotalMilliseconds ?? 0);
+            string bufferStoreName = null;
+            IStoreBuilder bufferStoreBuilder = null;
+            if (gracePeriodMs > 0)
+            {
+                ValidateGracePeriod(table, gracePeriodMs);
+                bufferStoreName = $"{name}-buffer";
+                bufferStoreBuilder = new InMemoryTimeOrderedKeyValueBufferBuilder<K, V>(
+                    bufferStoreName, joined.KeySerdes ?? KeySerdes, joined.ValueSerdes ?? ValueSerdes);
+            }
+
             var processorSupplier = new KStreamKTableJoin<K, VR, V, V0>(
                                         (table as IKTableGetter<K, V0>).ValueGetterSupplier,
                                         valueJoiner,
-                                        leftJoin);
+                                        leftJoin,
+                                        gracePeriodMs,
+                                        bufferStoreName,
+                                        joined.KeySerdes ?? KeySerdes,
+                                        joined.ValueSerdes ?? ValueSerdes);
             var processorParameters = new ProcessorParameters<K, V>(processorSupplier, name);
             var streamTableJoinNode = new StreamTableJoinNode<K, V>(
                 name,
                 processorParameters,
                 (table as IKTableGetter<K, V0>).ValueGetterSupplier.StoreNames,
-                NameNode
+                NameNode,
+                bufferStoreBuilder
             );
 
             builder.AddGraphNode(Node, streamTableJoinNode);
@@ -1425,6 +1449,17 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 allSourceNodes.ToList(),
                 streamTableJoinNode,
                 builder);
+        }
+
+        // a grace period needs a versioned source table, whose history retention covers the grace period
+        private static void ValidateGracePeriod<V0>(IKTable<K, V0> table, long gracePeriodMs)
+        {
+            long? historyRetentionMs = ((table as AbstractStream<K, V0>)?.Node as ITableSourceNode)?.VersionedHistoryRetentionMs;
+            if (!historyRetentionMs.HasValue)
+                throw new TopologyException("KTable must be versioned to use a grace period in a stream table join.");
+            if (gracePeriodMs > historyRetentionMs.Value)
+                throw new TopologyException(
+                    $"History retention must be at least the grace period. History retention=[{historyRetentionMs.Value}], grace period=[{gracePeriodMs}]");
         }
 
         private KStream<K, VR> GlobalTableJoin<K0, V0, VR>(IGlobalKTable<K0, V0> globalTable, IKeyValueMapper<K, V, K0> keyMapper, IValueJoiner<V, V0, VR> valueJoiner, bool leftJoin, string named)

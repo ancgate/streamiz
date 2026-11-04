@@ -1,4 +1,5 @@
 ﻿using Streamiz.Kafka.Net.Processors.Internal;
+using Streamiz.Kafka.Net.State;
 
 namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
 {
@@ -7,17 +8,20 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
         private readonly ProcessorParameters<K, V> processorParameters;
         private readonly string[] storeNames;
         private readonly string otherJoinSideNodeName;
+        private readonly IStoreBuilder bufferStoreBuilder;
 
         public StreamTableJoinNode(
                 string streamGraphNode,
                 ProcessorParameters<K, V> processorParameters,
                 string[] storeNames,
-                string otherJoinSideNodeName) 
+                string otherJoinSideNodeName,
+                IStoreBuilder bufferStoreBuilder = null) 
             : base(streamGraphNode)
         {
             this.processorParameters = processorParameters;
             this.storeNames = storeNames;
             this.otherJoinSideNodeName = otherJoinSideNodeName;
+            this.bufferStoreBuilder = bufferStoreBuilder;
         }
 
         public override void WriteToTopology(InternalTopologyBuilder builder)
@@ -30,6 +34,10 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
             {
                 builder.ConnectProcessorAndStateStore(processorParameters.ProcessorName, storeNames);
             }
+
+            // KIP-923: buffer of the stream records during the grace period
+            if (bufferStoreBuilder != null)
+                builder.AddStateStore(bufferStoreBuilder, processorParameters.ProcessorName);
         }
     }
 }
