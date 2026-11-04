@@ -215,6 +215,30 @@ var countStream = builder
 - Records with a null key or a null value are ignored.
 - The retention of the window store must be at least `2 * timeDifference + grace` (the default retention is one day): use `Materialized.WithRetention(...)` for longer windows.
 
+## Session windows
+
+**Session windows** group the records of a key into sessions: periods of activity separated by an inactivity gap. A record which is at most the inactivity gap away from a session of its key is added to it, a record which falls between two sessions merges them, otherwise the record starts a new session.
+
+```csharp
+var sessions = builder
+                        .Stream<string, string>("topic")
+                        .GroupByKey()
+                        .WindowedBy(SessionWindowOptions.Of(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1)))
+                        .Count(InMemorySessions.As<string, long>("sessions-store"));
+
+sessions.ToStream()
+        .To("output", new SessionWindowedSerDes<string>(new StringSerDes()), new Int64SerDes());
+```
+
+- `SessionWindowOptions.Of(inactivityGap)` creates session windows without grace period; `SessionWindowOptions.Of(inactivityGap, grace)` admits out-of-order records for the grace period.
+- A session covers `[start, end]` (the timestamps of its first and last records), **both ends inclusive**. It is returned as a `SessionWindow`, and the output keys are deserialized with `new SessionWindowedSerDes<K>(keySerdes)`.
+- `Count()` and `Reduce(reducer)` work as for the other windows. `Aggregate(initializer, aggregator, sessionMerger)` also takes a **merger**, which combines the aggregates of two sessions when a record merges them. `Reduce` merges sessions with the reducer.
+- When a record merges sessions, a tombstone is forwarded for each merged session (the session is removed), then the new session. Results are forwarded with the session end as timestamp.
+- **Tombstones of value-type aggregates**: a value type (for example the `long` of `Count`) can't be null, so the tombstones of merged sessions are forwarded with the default value (`0` for `Count`). Use `Aggregate` with a reference type if downstream consumers need real tombstones.
+- A session can still be extended by a record up to the inactivity gap after its end: a record is dropped when its session ends before `stream time - grace - inactivity gap`. Records with a null key are ignored.
+- Session stores are materialized with `InMemorySessions.As<K, V>(...)` or `RocksDbSessions.As<K, V>(...)` (default: RocksDB). Their retention must be at least `inactivity gap + grace` (the default retention is one day). They can be queried with `QueryableStoreTypes.SessionStore<K, V>()` and `TopologyTestDriver.GetSessionStore<K, V>(name)`.
+- To emit only the final result of each session, use `Suppress(SuppressedBuilder.UntilWindowClose<Windowed<K>, V>(inactivityGap + grace, bufferConfig))`: a session is emitted once its end is at most `stream time - (inactivity gap + grace)`, and the tombstones of sessions which were never emitted are dropped (for reference-type aggregates).
+
 ## IKStream-IKStream Join
 
 IKStream-IKStream joins are always windowed joins, because otherwise the size of the internal state store used to perform the join – e.g., a sliding window or “buffer” – would grow indefinitely. For stream-stream joins it’s important to highlight that a new input record on one side will produce a join output for each matching record on the other side, and there can be multiple such matching records in a given join window.

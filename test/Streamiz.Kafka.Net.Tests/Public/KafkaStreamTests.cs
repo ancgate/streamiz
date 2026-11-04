@@ -458,6 +458,87 @@ namespace Streamiz.Kafka.Net.Tests.Public
         }
 
         [Test]
+        public async Task GetSessionElementInStateStore()
+        {
+            var timeout = TimeSpan.FromSeconds(10);
+
+            bool isRunningState = false;
+            DateTime dt = DateTime.Now;
+
+            var config = new StreamConfig<StringSerDes, StringSerDes>();
+            config.ApplicationId = "test";
+            config.BootstrapServers = "127.0.0.1";
+            config.PollMs = 10;
+
+            var supplier = new SyncKafkaSupplier();
+            var producer = supplier.GetProducer(config.ToProducerConfig());
+
+            var builder = new StreamBuilder();
+            builder
+                .Stream<string, string>("test")
+                .GroupByKey()
+                .WindowedBy(SessionWindowOptions.Of(TimeSpan.FromMinutes(1)))
+                .Count(InMemorySessions.As<string, long>("store"));
+
+            var t = builder.Build();
+            var stream = new KafkaStream(t, config, supplier);
+
+            stream.StateChanged += (old, @new) =>
+            {
+                if (@new.Equals(KafkaStream.State.RUNNING))
+                {
+                    isRunningState = true;
+                }
+            };
+            await stream.StartAsync();
+            while (!isRunningState)
+            {
+                Thread.Sleep(250);
+                if (DateTime.Now > dt + timeout)
+                {
+                    break;
+                }
+            }
+            Assert.IsTrue(isRunningState);
+
+            if (isRunningState)
+            {
+                var serdes = new StringSerDes();
+                var time = DateTime.Now;
+                foreach (var offset in new[] {0, 10})
+                    producer.Produce("test",
+                        new Confluent.Kafka.Message<byte[], byte[]>
+                        {
+                            Key = serdes.Serialize("key1", new SerializationContext()),
+                            Value = serdes.Serialize("coucou", new SerializationContext()),
+                            Timestamp = new Confluent.Kafka.Timestamp(time.AddSeconds(offset))
+                        });
+
+                var store = stream.Store(StoreQueryParameters.FromNameAndType("store", QueryableStoreTypes.SessionStore<string, long>()));
+                Assert.IsNotNull(store);
+
+                List<KeyValuePair<Windowed<string>, long>> sessions = new();
+                var end = DateTime.Now.AddSeconds(5);
+                while (DateTime.Now < end)
+                {
+                    using var enumerator = store.Fetch("key1");
+                    sessions.Clear();
+                    while (enumerator.MoveNext())
+                        sessions.Add(enumerator.Current.Value);
+                    if (sessions.Count == 1 && sessions[0].Value == 2)
+                        break;
+                    Thread.Sleep(50);
+                }
+
+                Assert.AreEqual(1, sessions.Count);
+                Assert.AreEqual(2, sessions[0].Value);
+                Assert.AreEqual(10000, sessions[0].Key.Window.EndMs - sessions[0].Key.Window.StartMs);
+            }
+
+            stream.Dispose();
+        }
+
+        [Test]
         public async Task GetWindowElementInStateStore()
         {
             var timeout = TimeSpan.FromSeconds(10);

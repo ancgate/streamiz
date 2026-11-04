@@ -58,9 +58,10 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                                     builder);
         }
 
+        // window store (time windows) or session store (session windows)
         internal IKTable<KR, VR> BuildWindow<KR, VR>(
             string functionName,
-            IStoreBuilder<ITimestampedWindowStore<K, VR>> storeBuilder,
+            IStoreBuilder storeBuilder,
             IKStreamAggProcessorSupplier<K, KR, V, VR> aggregateSupplier,
             string queryableStoreName,
             ISerDes<KR> keySerdes,

@@ -359,5 +359,16 @@ namespace Streamiz.Kafka.Net.Stream
         /// <param name="options">the specification of the sliding windows</param>
         /// <returns>an instance of <see cref="ITimeWindowedKStream{K, V}"/></returns>
         ITimeWindowedKStream<K, V> WindowedBy(SlidingWindowOptions options);
+
+        /// <summary>
+        /// Create a new <see cref="ISessionWindowedKStream{K, V}"/> instance that can be used to perform session windowed aggregations.
+        /// The records of a key are grouped into sessions: a record at most the inactivity gap away from a session is added to it
+        /// (merging sessions if it bridges them), otherwise it starts a new session.
+        /// Sessions are [start, end], both ends inclusive, and the output keys can be deserialized with <see cref="SerDes.SessionWindowedSerDes{T}"/>.
+        /// The retention of the session store must be at least inactivity gap + grace period.
+        /// </summary>
+        /// <param name="options">the specification of the session windows</param>
+        /// <returns>an instance of <see cref="ISessionWindowedKStream{K, V}"/></returns>
+        ISessionWindowedKStream<K, V> WindowedBy(SessionWindowOptions options);
     }
 }
