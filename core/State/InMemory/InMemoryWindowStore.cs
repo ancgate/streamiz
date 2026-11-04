@@ -432,17 +432,22 @@ namespace Streamiz.Kafka.Net.State.InMemory
             {
                 // register the store
                 context.Register(root,
-                    (key, value, timestamp) =>
+                    (key, value, timestamp) => RestoreRecord(key, value),
+                    records =>
                     {
-                        Put(
-                            Bytes.Wrap(WindowKeyHelper.ExtractStoreKeyBytes(key.Get)),
-                            value,
-                            WindowKeyHelper.ExtractStoreTimestamp(key.Get));
+                        foreach (var record in records)
+                            RestoreRecord(record.Key, record.Value);
                     });
             }
 
             IsOpen = true;
         }
+
+        private void RestoreRecord(Bytes key, byte[] value)
+            => Put(
+                Bytes.Wrap(WindowKeyHelper.ExtractStoreKeyBytes(key.Get)),
+                value,
+                WindowKeyHelper.ExtractStoreTimestamp(key.Get));
 
         public virtual void Put(Bytes key, byte[] value, long windowStartTimestamp)
         {

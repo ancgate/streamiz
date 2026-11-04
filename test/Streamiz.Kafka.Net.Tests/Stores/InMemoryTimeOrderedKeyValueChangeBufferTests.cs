@@ -25,6 +25,7 @@ public class InMemoryTimeOrderedKeyValueChangeBufferTests
     private ProcessorContext context;
     private StreamsProducer producer;
     private Action<ConsumeResult<byte[],byte[]>> restoreCallback;
+    private Action<IReadOnlyList<ConsumeResult<byte[],byte[]>>> batchRestoreCallback;
 
     private void PutRecord(long streamTime,
         long recordTimestamp,
@@ -56,6 +57,15 @@ public class InMemoryTimeOrderedKeyValueChangeBufferTests
             .Callback((IStateStore store, Action<ConsumeResult<byte[], byte[]>> callback) =>
             {
                 restoreCallback = callback;
+            });
+        stateManager.Setup(s =>
+                s.Register(It.IsAny<IStateStore>(), It.IsAny<Action<ConsumeResult<byte[], byte[]>>>(),
+                    It.IsAny<Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>>>()))
+            .Callback((IStateStore store, Action<ConsumeResult<byte[], byte[]>> callback,
+                Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> batchCallback) =>
+            {
+                restoreCallback = callback;
+                batchRestoreCallback = batchCallback;
             });
         
         stateManager.Setup(s => s.GetRegisteredChangelogPartitionFor(It.IsAny<string>()))
@@ -419,6 +429,50 @@ public class InMemoryTimeOrderedKeyValueChangeBufferTests
         Assert.IsNull(buffer.PriorValueForBuffered("key1").Value);
         Assert.IsTrue(buffer.PriorValueForBuffered("key2").IsDefined);
         Assert.AreEqual("value2", buffer.PriorValueForBuffered("key2").Value.Value);
+    }
+
+    [Test]
+    public void RestoreBatchTest()
+    {
+        buffer.SetSerdesIfNull(new StringSerDes(), new StringSerDes());
+
+        ConsumeResult<byte[], byte[]> Record(long offset, string key, string value, long time)
+        {
+            byte[] bytes = null;
+            if (value != null)
+            {
+                var bufferValue = GetBufferValue(value, time).Serialize(sizeof(long));
+                bufferValue.PutLong(time);
+                bytes = bufferValue.ToArray();
+            }
+
+            return new ConsumeResult<byte[], byte[]>
+            {
+                TopicPartitionOffset = new TopicPartitionOffset("topic", 0, offset),
+                Message = new Message<byte[], byte[]>
+                {
+                    Key = Encoding.UTF8.GetBytes(key),
+                    Value = bytes,
+                    Timestamp = new Timestamp(time, TimestampType.CreateTime),
+                    Headers = new()
+                }
+            };
+        }
+
+        Assert.IsNotNull(batchRestoreCallback);
+        batchRestoreCallback(new List<ConsumeResult<byte[], byte[]>>
+        {
+            Record(0, "key1", "value1", 0L),
+            Record(1, "key2", "value2", 1L),
+            Record(2, "key3", "value3", 2L),
+            Record(3, "key1", null, 3L) // tombstone in the same batch
+        });
+
+        Assert.AreEqual(2, buffer.NumRecords);
+        Assert.AreEqual(1, buffer.MinTimestamp);
+        Assert.IsFalse(buffer.PriorValueForBuffered("key1").IsDefined);
+        Assert.IsTrue(buffer.PriorValueForBuffered("key2").IsDefined);
+        Assert.IsTrue(buffer.PriorValueForBuffered("key3").IsDefined);
     }
 
     [Test]
