@@ -1171,9 +1171,13 @@ namespace Streamiz.Kafka.Net.Stream.Internal
 
         #endregion
 
-        #region WithRecordTimestamp
+        #region AlterRecordTimestamp
 
+        [Obsolete("Use AlterRecordTimestamp instead. WithRecordTimestamp will be removed in a future major version.")]
         public IKStream<K, V> WithRecordTimestamp(Func<K, V, IRecordContext, long> timestampExtractor, string named = null)
+            => AlterRecordTimestamp(timestampExtractor, named);
+
+        public IKStream<K, V> AlterRecordTimestamp(Func<K, V, IRecordContext, long> timestampExtractor, string named = null)
         {
             if (timestampExtractor == null)
             {

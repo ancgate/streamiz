@@ -8,7 +8,7 @@
 - [ ] KIP-612 : end-to-end latency metrics
 - [ ] KIP-450 : Sliding windows
 - [ ] Session Windows
-- [ ] Rename WithRecordTimestamp to AlterRecordTimestamp
+- [x] Rename WithRecordTimestamp to AlterRecordTimestamp
 - [ ] Versioned State Store
 - [ ] https://cwiki.apache.org/confluence/display/KAFKA/KIP-923%3A+Add+A+Grace+Period+to+Stream+Table+Join
 - [ ] KIP-424 : Allow suppression of intermediate events based on wall clock time
