@@ -48,7 +48,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 |---|---|---|
 | 1. Quick wins (done) | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
 | 2. Error handling (done) | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
-| 3. Windowing | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
+| 3. Windowing (done) | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
 | 5. Time-aware state | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
 | 6. Performance | Batch cache eviction | Needs benchmarks; touches the hot path |
@@ -164,71 +164,53 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 ---
 
-## Phase 3: Windowing
+## Phase 3: Windowing (done)
 
-### 3.1 Sliding windows, KIP-450 (L)
+### 3.1 Sliding windows, KIP-450 (done)
 
-**Today:** nothing. The current window API (`WindowOptions<W>.WindowsFor(ts)`) assumes fixed windows computed per record. Sliding windows can't use it, because they depend on the records already in the store.
+**API:** `IKGroupedStream.WindowedBy(SlidingWindowOptions)`. It returns the existing `ITimeWindowedKStream`, so every Count, Aggregate and Reduce overload works. `SlidingWindowOptions.Of(timeDifference[, grace])`; without a grace argument, there is no grace period.
 
-**Plan:**
-- **Options.** `SlidingWindowOptions.Of(timeDifference[, grace])`. It does not extend `WindowOptions<W>`, matching Kafka.
-- **DSL.** `IKGroupedStream.WindowedBy(SlidingWindowOptions)` returns `ITimeWindowedKStream<K,V>`, so `Count`, `Aggregate` and `Reduce` work unchanged for users.
-  - `TimeWindowedKStream` gets a second constructor that picks the sliding processor supplier.
-- **Processor.** New `KStreamSlidingWindowAggregate` supplier + `KStreamSlidingWindowAggregateProcessor`, ported from Kafka's algorithm. For each record at time `t`:
-  - fetch windows for the key with start in `[t - 2·timeDiff, t + timeDiff]`, using `IReadOnlyWindowStore.Fetch(key, from, to)`;
-  - update every window containing `t`;
-  - create the left window `[t - timeDiff, t]` if it is missing, seeding it with the aggregate of the records it covers;
-  - create the right window `[t + 1, t + 1 + timeDiff]` if a later record exists and that window is missing;
-  - drop late records past grace and record `droppedRecordsSensor`.
-- **Store and serde.** Store retention is `timeDiff * 2 + grace` (validated in `WindowStoreMaterializer`). Windows are fixed size, so `TimeWindowedSerDes` is reused.
-- **Store fix.** Implement the missing reverse fetch (`IReadOnlyWindowStore` TODO) to make the scan efficient. If it slips, use a forward fetch.
+**Behaviour:**
+- Windows are `[start, start + timeDifference]`, inclusive on both ends as in Kafka. They are stored by start, so output keys use `TimeWindowedSerDes<K>(inner, timeDifference)`.
+- The processor is a port of Kafka's forward path:
+  - in-order and early records, left and right windows, out-of-order records within grace, late records dropped.
+  - Each record reads a small range of windows (at most 2·timeDifference + 1).
+- The store retention must be at least 2·timeDifference + grace.
 
-**Tests:**
-- New `SlidingWindowKStreamCountTests`, `...AggTests`, `...ReduceTests`, modelled on the existing `TimeWindowKStream*Tests`.
-- Port Kafka's `KStreamSlidingWindowAggregateTest` cases for out-of-order records, grace and early records.
+**Tests and docs:** 17 tests (Count, Aggregate, Reduce), with each expected result worked out by hand. Documented in `docs/stateful-processors.md`.
 
-### 3.2 Session windows (XL, split into 3 PRs)
+**Differences from Kafka:**
+- The default retention is still Streamiz's one day; large windows need `WithRetention`.
+- Null values are skipped, as Kafka's sliding aggregate does.
 
-**Today:** only empty interfaces.
+### 3.2 Session windows (done)
 
-**PR A: store layer**
-- `SessionWindow : Window`, with an inclusive end and its own `Overlap`.
-- `ISessionStore<K,AGG>` members:
-  - `FindSessions(key, earliestSessionEndTime, latestSessionStartTime)`
-  - `Remove(Windowed<K>)`
-  - `Put(Windowed<K>, AGG)`
-  - `FetchSession(key, start, end)`
-- `IReadOnlySessionStore` members: `Fetch(key)` and `Fetch(from, to)`.
-- `SessionKeySchema : IKeySchema`, with layout `key | end(8) | start(8)`.
-- RocksDB store: `RocksDbSessionBytesStoreSupplier` produces `RocksDbSessionStore`, built on the existing `RocksDbSegmentedBytesStore` with the new key schema.
-- `InMemorySessionStore` (+ supplier).
-- Wrappers:
-  - `MeteredSessionStore`, `CachingSessionStore` (reusing `SegmentedCacheFunction`), `ChangeLoggingSessionBytesStore`.
-  - `SessionStoreBuilder` and `Stores.PersistentSessionStore` / `InMemorySessionStore`.
-- Uncomment the `Materialized` overloads and add `InMemorySessions` / `RocksDbSessions` helpers.
-- Tests: store tests modelled on `InMemoryWindowStoreTests` / `RocksDbWindowStoreTests`, plus `SessionKeySchemaTests`.
+**Store layer:**
+- `SessionWindow` (inclusive ends).
+- The `ISessionStore` and `IReadOnlySessionStore` interfaces: `FindSessions`, `FetchSession`, `Fetch`, the backward variants, `Put` and `Remove`.
+- `SessionKeySchema`, with the layout `key | end | start` as in Kafka.
+- RocksDB and in-memory session stores, with changelog logging, caching and metered layers, and batch restore.
+- `Stores.*SessionStore`, `Materialized.Create(ISessionBytesStoreSupplier)`, `InMemorySessions.As` / `RocksDbSessions.As`, `SessionWindowedSerDes<K>`, `QueryableStoreTypes.SessionStore` and `TopologyTestDriver.GetSessionStore`.
+- 73 store tests.
 
-**PR B: DSL**
-- `SessionWindowOptions.With(inactivityGap[, grace])`.
-- `IKGroupedStream.WindowedBy(SessionWindowOptions)` returns `ISessionWindowedKStream<K,V>`, which offers:
-  - `Count`
-  - `Aggregate(initializer, aggregator, merger)`
-  - `Reduce`
-- `KStreamSessionWindowAggregateProcessor`. For each record:
-  - find overlapping sessions within the gap;
-  - merge them with `merger`;
-  - remove the old sessions, forwarding tombstones for them;
-  - put the merged session.
-- A session variant of `GroupedStreamAggregateBuilder.BuildWindow` (today it is typed to `ITimestampedWindowStore`).
-- `SessionWindowedSerDes<K>`, which serialises the key with start and end.
-- A session-aware KTable value getter.
-- Tests: `SessionWindowKStreamCountTests` / `AggTests` / `ReduceTests` covering merging, late records and grace.
+**DSL:**
+- `IKGroupedStream.WindowedBy(SessionWindowOptions)` returns `ISessionWindowedKStream`, with Count, Aggregate (initializer, aggregator, `Merger`) and Reduce, in the same overload set as time windows.
+- The processor is a port of Kafka's:
+  - it looks for sessions within ± the gap and merges them;
+  - it removes the merged sessions and forwards a tombstone for each;
+  - it puts the new session in the store and forwards it, using the session end as the record timestamp.
+  - Close time = stream time − grace − gap.
+- `Suppress(UntilWindowClose(gap + grace))` works on session tables.
+- The session store can be queried from a running `KafkaStream`.
+- 21 DSL tests.
 
-**PR C: queries and test driver**
-- `QueryableStoreTypes.SessionStore`.
-- `TopologyTestDriver.GetSessionStore`.
-- Suppress `UntilWindowClose` support for session-windowed tables.
-- Docs.
+**Open design question:** `Count` returns `long`, which can't be null in C#. So the tombstone for a merged session comes out as `0` instead of null, and `Count` followed by `Suppress(UntilWindowClose)` also emits those `0` records. Options:
+- Make session `Count` return `long?`. This breaks consistency with time-window `Count`.
+- Represent tombstones explicitly in `Change<T>` and in the sinks.
+
+`Aggregate` and `Reduce` with reference types aren't affected.
+
+**Not done:** emit-final strategies (KIP-825). The default retention for sessions is one day, where Kafka uses gap + grace.
 
 ---
 

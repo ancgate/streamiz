@@ -110,8 +110,8 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | External Async Processing                                    |                                    |         X              | V2 in coming                               |
 | Hopping window                                               |              X                     |         X              |                                            |
 | Tumbling window                                              |              X                     |         X              |                                            |
-| Sliding window                                               |              X                     |                        | No plan for now                            |
-| Session window                                               |              X                     |                        | No plan for now                            |
+| Sliding window                                               |              X                     |         X              |                                            |
+| Session window                                               |              X                     |         X              |                                            |
 | Cache                                                        |              X                     |         X              |                                            |
 | Suppress(..)                                                 |              X                     |         X              |                                            |
 | Interactive Queries                                          |              X                     |                        | No plan for now                            |

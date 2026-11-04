@@ -6,8 +6,8 @@
 - [x] State store restore handler with a batch approach
 - [ ] Evict cache store as a batch of records instead of unitary records
 - [x] KIP-613 : end-to-end latency metrics
-- [ ] KIP-450 : Sliding windows
-- [ ] Session Windows
+- [x] KIP-450 : Sliding windows
+- [x] Session Windows
 - [x] Rename WithRecordTimestamp to AlterRecordTimestamp
 - [ ] Versioned State Store
 - [ ] https://cwiki.apache.org/confluence/display/KAFKA/KIP-923%3A+Add+A+Grace+Period+to+Stream+Table+Join
