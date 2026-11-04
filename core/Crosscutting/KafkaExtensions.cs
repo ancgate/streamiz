@@ -88,7 +88,7 @@ namespace Streamiz.Kafka.Net.Crosscutting
         }
 
         internal static long GetEstimatedSize(this Headers headers)
-            => headers.Sum(header => header.Key.Length + header.GetValueBytes().LongLength);
+            => headers?.Sum(header => header.Key.Length + (header.GetValueBytes()?.LongLength ?? 0)) ?? 0;
         
         internal static Headers AddOrUpdate(this Headers headers, string key, byte[] value)
         {

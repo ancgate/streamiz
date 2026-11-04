@@ -3,6 +3,7 @@ using System.Threading;
 using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Metrics;
 using Streamiz.Kafka.Net.Metrics.Internal;
+using Streamiz.Kafka.Net.Processors.Internal;
 using Streamiz.Kafka.Net.Processors.Public;
 using Streamiz.Kafka.Net.SerDes;
 using Streamiz.Kafka.Net.State.Suppress;
@@ -62,11 +63,14 @@ namespace Streamiz.Kafka.Net.Processors
 
             if (useWallClockTime)
             {
-                // The buffer can be restored from its changelog after Init: check it once on the first punctuation.
+                // The buffer is restored from its changelog after Init: check it once the task is running.
+                // Punctuations also run while the task is restoring, so wait until the restoration is done.
                 TaskScheduled startup = null;
                 startup = Context.Task.RegisterScheduleTask(TimeSpan.FromMilliseconds(1),
                     PunctuationType.PROCESSING_TIME, now =>
                     {
+                        if (!TaskState.RUNNING.Equals(Context.Task.State))
+                            return;
                         startup.Cancel();
                         EvictExpiredWallClock(now);
                     });

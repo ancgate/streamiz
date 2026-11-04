@@ -93,7 +93,11 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 
 **Docs and tests:** documented in `docs/stateful-processors.md`; 8 new tests in `KTableSuppressTests`.
 
-**Not covered:** no automated test for emitting restored records after a restart, because the sync test driver can't simulate a restore.
+**Restart behaviour (fixed in the cleanup):** a test now restarts a stream thread and checks that the restored record is emitted with no new input (`SuppressWallClockRestoreTests`). It found two bugs, both fixed:
+- **The startup check ran before the restore finished.** Streamiz runs punctuations on tasks that are still restoring, so the check saw an empty buffer and never ran again. It now waits until the task is running.
+- **Suppress crashed on records without headers.** Both the size estimate and the changelog serialization failed when a record's headers were null.
+
+**Open question:** Kafka Streams only punctuates running tasks, but Streamiz also punctuates restoring ones, so user punctuators can run against stores that are still restoring. Changing this affects every punctuator, so it needs its own decision.
 
 ### 1.4 Batch state store restoration (done)
 
@@ -105,10 +109,10 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
   - `RocksDbKeyValueStore`: one RocksDB `WriteBatch` per batch.
   - RocksDB segmented (window) store: one write per run of records in the same segment, with exactly the same expired-segment behaviour as record-by-record restore.
   - `InMemoryKeyValueStore`: loops over `Put`.
-- **Left as follow-ups:**
-  - `InMemoryWindowStore` and the suppress buffer still restore record by record.
-  - `StateStoreMetrics.RestoreSensor` is still not recorded: the state manager doesn't have the store's metrics scope.
-  - **Test mock bug:** `SyncConsumer.Position` returns one more than the real position. With the sync mock, a restore can finish one record early when exactly one record is left after a batch. Real consumers are not affected. Fix: return `OffsetConsumed`.
+- **Follow-ups, done in the cleanup:**
+  - `InMemoryWindowStore` and the suppress buffer also restore in batches. The suppress buffer updates its metrics once per batch.
+  - The restore metric (`restore-rate`, `restore-latency-avg/max`, DEBUG level) is recorded for every batch. Metered stores create it before initializing the inner store, so global stores are covered too.
+  - The test mock bug is fixed: `SyncConsumer.Position` returned one past the real position. The batch restore test now uses an odd number of records, which failed before the fix.
 
 ### 1.5 README / docs corrections (done)
 
