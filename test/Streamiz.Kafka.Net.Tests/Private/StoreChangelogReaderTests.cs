@@ -105,10 +105,10 @@ namespace Streamiz.Kafka.Net.Tests.Private
             producer.Produce(changelogTopic, new Message<byte[], byte[]> {Key = Ser("key3"), Value = null});
             producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key4", "value4"));
             producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key5", "value5"));
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key6", "value6"));
 
-            // dedicated state dir and reader: restore 2 records per batch (8 records => 4 batches).
-            // An even count avoids a SyncConsumer.Position off-by-one (it returns next offset + 1), which
-            // ends the restoration early when exactly one record is left after a batch.
+            // dedicated state dir and reader: restore 2 records per batch (9 records => 5 batches, the last one
+            // has a single record, which must not be lost when the restoration completes).
             var batchConfig = new StreamConfig<StringSerDes, StringSerDes>();
             batchConfig.ApplicationId = "test-storechangelog-batch-app";
             batchConfig.StateDir = Path.Combine(".", Guid.NewGuid().ToString());
@@ -140,7 +140,7 @@ namespace Streamiz.Kafka.Net.Tests.Private
 
                 var metadata = batchReader.GetMetadata(changelog);
                 Assert.AreEqual(ChangelogState.COMPLETED, metadata.ChangelogState);
-                Assert.AreEqual(8, metadata.TotalRestored);
+                Assert.AreEqual(9, metadata.TotalRestored);
 
                 var content = batchStore.All()
                     .ToDictionary(kv => serdes.Deserialize(kv.Key.Get, new SerializationContext()),
@@ -149,7 +149,8 @@ namespace Streamiz.Kafka.Net.Tests.Private
                 {
                     {"key1", "value1b"},
                     {"key4", "value4"},
-                    {"key5", "value5"}
+                    {"key5", "value5"},
+                    {"key6", "value6"}
                 }, content);
             }
             finally
