@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Streamiz.Kafka.Net.Crosscutting;
+using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.SerDes;
 using Streamiz.Kafka.Net.State;
 using Streamiz.Kafka.Net.State.Internal;
@@ -17,13 +18,31 @@ namespace Streamiz.Kafka.Net.Stream.Internal
         private readonly GroupedStreamAggregateBuilder<K, V> aggBuilder;
 
         public TimeWindowedKStream(WindowOptions<W> windowOptions, GroupedStreamAggregateBuilder<K, V> aggBuilder, string name, ISerDes<K> keySerde, ISerDes<V> valSerde, List<string> sourceNodes, StreamGraphNode streamsGraphNode, InternalStreamBuilder builder) 
-            : base(name, keySerde, valSerde, sourceNodes, streamsGraphNode, builder)
+            : this(aggBuilder, name, keySerde, valSerde, sourceNodes, streamsGraphNode, builder)
         {
             CheckIfParamNull(windowOptions, "windowOptions");
 
             this.windowOptions = windowOptions;
+        }
+
+        // for windows which are not defined by WindowOptions (sliding windows): override the methods of the Windows region
+        protected TimeWindowedKStream(GroupedStreamAggregateBuilder<K, V> aggBuilder, string name, ISerDes<K> keySerde, ISerDes<V> valSerde, List<string> sourceNodes, StreamGraphNode streamsGraphNode, InternalStreamBuilder builder) 
+            : base(name, keySerde, valSerde, sourceNodes, streamsGraphNode, builder)
+        {
             this.aggBuilder = aggBuilder;
         }
+
+        #region Windows
+
+        protected virtual long WindowSize => windowOptions.Size;
+
+        protected virtual IKStreamAggProcessorSupplier<K, Windowed<K>, V, VR> AggregateSupplier<VR>(string storeName, Initializer<VR> initializer, Aggregator<K, V, VR> aggregator)
+            => new KStreamWindowAggregate<K, V, VR, W>(windowOptions, storeName, initializer, aggregator);
+
+        protected virtual IStoreBuilder<ITimestampedWindowStore<K, VR>> Materialize<VR>(Materialized<K, VR, IWindowStore<Bytes, byte[]>> materialized)
+            => new TimestampedWindowStoreMaterializer<K, VR, W>(windowOptions, materialized).Materialize();
+
+        #endregion
 
         #region ITimeWindowedKStream Impl
 
@@ -77,16 +96,15 @@ namespace Streamiz.Kafka.Net.Stream.Internal
             string name = new Named(named).OrElseGenerateWithPrefix(builder, KGroupedStream.AGGREGATE_NAME);
             materialized.UseProvider(builder, KGroupedStream.AGGREGATE_NAME);
 
-            var aggSupplier = new KStreamWindowAggregate<K, V, VR, W>(
-                windowOptions,
+            var aggSupplier = AggregateSupplier(
                 materialized.StoreName,
                 initializer,
                 aggregator);
 
-            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, windowOptions.Size) : null;
+            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, WindowSize) : null;
 
             return aggBuilder.BuildWindow(name,
-                                    new TimestampedWindowStoreMaterializer<K, VR, W>(windowOptions, materialized).Materialize(),
+                                    Materialize(materialized),
                                     aggSupplier,
                                     materialized.QueryableStoreName,
                                     windowSerdes,
@@ -118,16 +136,15 @@ namespace Streamiz.Kafka.Net.Stream.Internal
             string name = new Named(named).OrElseGenerateWithPrefix(builder, KGroupedStream.REDUCE_NAME);
             materialized.UseProvider(builder, KGroupedStream.REDUCE_NAME);
 
-            var aggSupplier = new KStreamWindowAggregate<K, V, V, W>(
-                windowOptions,
+            var aggSupplier = AggregateSupplier(
                 materialized.StoreName,
-                () => default,
-                (aggKey, value, agg) => agg == null ? value : reducer.Apply(agg, value));
+                new WrappedInitializer<V>(() => default),
+                new WrappedAggregator<K, V, V>((aggKey, value, agg) => agg == null ? value : reducer.Apply(agg, value)));
 
-            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, windowOptions.Size) : null;
+            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, WindowSize) : null;
 
             return aggBuilder.BuildWindow(name,
-                                    new TimestampedWindowStoreMaterializer<K, V, W>(windowOptions, materialized).Materialize(),
+                                    Materialize(materialized),
                                     aggSupplier,
                                     materialized.QueryableStoreName,
                                     windowSerdes,
@@ -155,16 +172,15 @@ namespace Streamiz.Kafka.Net.Stream.Internal
             string name = new Named(named).OrElseGenerateWithPrefix(builder, KGroupedStream.AGGREGATE_NAME);
             materialized.UseProvider(builder, KGroupedStream.AGGREGATE_NAME);
 
-            var aggSupplier = new KStreamWindowAggregate<K, V, long, W>(
-                windowOptions,
+            var aggSupplier = AggregateSupplier(
                 materialized.StoreName,
-                () => 0L,
-                (aggKey, value, aggregate) => aggregate + 1);
+                new WrappedInitializer<long>(() => 0L),
+                new WrappedAggregator<K, V, long>((aggKey, value, aggregate) => aggregate + 1));
 
-            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, windowOptions.Size) : null;
+            ISerDes<Windowed<K>> windowSerdes = materialized.KeySerdes != null ? new TimeWindowedSerDes<K>(materialized.KeySerdes, WindowSize) : null;
 
             return aggBuilder.BuildWindow(name,
-                                    new TimestampedWindowStoreMaterializer<K, long, W>(windowOptions, materialized).Materialize(),
+                                    Materialize(materialized),
                                     aggSupplier,
                                     materialized.QueryableStoreName,
                                     windowSerdes,

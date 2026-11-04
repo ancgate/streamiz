@@ -16,6 +16,18 @@ namespace Streamiz.Kafka.Net.State.Internal
             
         }
 
+        /// <summary>
+        /// Sliding windows: the windows are as large as the time difference, and the store must keep two time
+        /// differences (a record's left window and the right window of the record before it) plus the grace period.
+        /// </summary>
+        public TimestampedWindowStoreMaterializer(SlidingWindowOptions slidingWindows, Materialized<K, V, IWindowStore<Bytes, byte[]>> materializedInternal)
+            : base(materializedInternal,
+                slidingWindows.TimeDifferenceMs,
+                2 * slidingWindows.TimeDifferenceMs + slidingWindows.GracePeriodMs,
+                $"2 * time difference plus the grace period. Got time difference=[{slidingWindows.TimeDifferenceMs}], grace=[{slidingWindows.GracePeriodMs}]")
+        {
+        }
+
         protected override IStoreBuilder<ITimestampedWindowStore<K, V>> GetWindowStoreBuilder(IWindowBytesStoreSupplier supplier)
             => Stores.TimestampedWindowStoreBuilder(supplier, materializedInternal.KeySerdes, materializedInternal.ValueSerdes);
    }

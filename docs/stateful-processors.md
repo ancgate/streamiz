@@ -194,6 +194,27 @@ Detailed behavior:
 - When a record key is received for the first time for a given window, then the value of that record is used as the initial aggregate value.
 - Whenever a record with a non-null value is received for a given window, the reducer is called.
 
+## Sliding windows
+
+**Sliding windows (KIP-450)** are fixed-size windows which slide continuously over the time axis: two records are in the same window when the difference of their timestamps is less than or equal to the time difference. Unlike hopping windows, sliding windows are not aligned to the epoch: they are created from the record timestamps, so there is one window per distinct set of records within a time difference, and no empty window.
+
+`Count`, `Aggregate` and `Reduce` work the same as with tumbling or hopping windows.
+
+```csharp
+var countStream = builder
+                        .Stream<string, string>("topic")
+                        .GroupByKey()
+                        .WindowedBy(SlidingWindowOptions.Of(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1)))
+                        .Count();
+```
+
+- `SlidingWindowOptions.Of(timeDifference)` creates sliding windows without grace period; `SlidingWindowOptions.Of(timeDifference, grace)` admits out-of-order records for the grace period after the end of a window.
+- A window covers `[start, start + timeDifference]`, **both ends inclusive**. It is returned as a `TimeWindow` whose `EndMs` is `start + timeDifference`, so the output keys are deserialized with `new TimeWindowedSerDes<K>(keySerdes, timeDifferenceMs)`.
+- For each record at `t`, the windows which contain it are updated, and up to two windows are created: its left window `[t - timeDifference, t]`, and its right window `[t + 1, t + 1 + timeDifference]` when later records fall in it.
+- Records with a timestamp smaller than the time difference all go in the window `[0, timeDifference]`, because a window can't start before 0.
+- Records with a null key or a null value are ignored.
+- The retention of the window store must be at least `2 * timeDifference + grace` (the default retention is one day): use `Materialized.WithRetention(...)` for longer windows.
+
 ## IKStream-IKStream Join
 
 IKStream-IKStream joins are always windowed joins, because otherwise the size of the internal state store used to perform the join – e.g., a sliding window or “buffer” – would grow indefinitely. For stream-stream joins it’s important to highlight that a new input record on one side will produce a join output for each matching record on the other side, and there can be multiple such matching records in a given join window.
