@@ -512,4 +512,25 @@ The key parts of this program are:
 - `.Suppress(SuppressedBuilder.UntilWindowClose<Windowed<string>, long>(TimeSpan.Zero,` This configures the suppression operator to emit nothing for a window until it closes, and then emit the final result without a grace period.
 - `StrictBufferConfig.Unbounded()))` This configures the buffer used for storing events until their windows close.
 
+### Rate limiting updates: `UntilTimeLimit` and `UntilWallClockTimeLimit`
+
+Suppression is not limited to windowed tables. To limit how often a `KTable` emits updates, buffer the latest value of each key for a fixed amount of time:
+
+- `SuppressedBuilder.UntilTimeLimit<K, V>(timeLimit, bufferConfig)` uses **stream time** (record timestamps). A buffered value is emitted when a newer record moves the stream time past the limit, so nothing is emitted while no new records arrive.
+- `SuppressedBuilder.UntilWallClockTimeLimit<K, V>(timeLimit, bufferConfig)` uses **wall-clock time** (KIP-424). A buffered value is emitted once the limit has elapsed on the clock, even if no new records arrive.
+
+In both modes, an update for a key that is already buffered replaces the buffered value but does not restart the timer, so each key is emitted at most once per time limit. The buffer configuration (`StrictBufferConfig` / `EagerConfig`) works the same way as for `UntilWindowClose`.
+
+``` csharp
+builder.Table("input", new StringSerDes(), new StringSerDes(), InMemory.As<string, string>("table-store"))
+    .Suppress(SuppressedBuilder.UntilWallClockTimeLimit<string, string>(TimeSpan.FromMinutes(1),
+                StrictBufferConfig.Unbounded())
+        .WithKeySerdes(new StringSerDes())
+        .WithValueSerdes(new StringSerDes()))
+    .ToStream()
+    .To("output");
+```
+
+In `TopologyTestDriver`, use `driver.AdvanceWallClockTime(...)` to move the wall clock forward and trigger the emission.
+
 More details on the `Suppressed` class in the documentation.

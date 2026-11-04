@@ -3,6 +3,7 @@ using System.Threading;
 using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Metrics;
 using Streamiz.Kafka.Net.Metrics.Internal;
+using Streamiz.Kafka.Net.Processors.Public;
 using Streamiz.Kafka.Net.SerDes;
 using Streamiz.Kafka.Net.State.Suppress;
 using Streamiz.Kafka.Net.Table;
@@ -19,6 +20,11 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly bool safeToDropTombstone;
         private readonly string storeName;
         private readonly Func<ProcessorContext, K, long> timeDefinition;
+        private readonly bool useWallClockTime;
+
+        // wall-clock mode: one punctuation scheduled for when the oldest buffered record is due
+        private TaskScheduled evictionPunctuation;
+        private long evictionPunctuationDueTime = -1;
         
         private Sensor suppressionEmitSensor;
         private long observedStreamTime = -1;
@@ -37,6 +43,7 @@ namespace Streamiz.Kafka.Net.Processors
             safeToDropTombstone = suppressed.SafeToDropTombstones;
             this.storeName = storeName;
             timeDefinition = suppressed.TimeDefinition;
+            useWallClockTime = suppressed.UseWallClockTime;
             keySerdes = suppressed.KeySerdes;
             valueSerdes = suppressed.ValueSerdes;
         }
@@ -52,6 +59,18 @@ namespace Streamiz.Kafka.Net.Processors
             
             buffer = (ITimeOrderedKeyValueBuffer<K, V, Change<V>>)context.GetStateStore(storeName);
             buffer.SetSerdesIfNull(keySerdes, valueSerdes);
+
+            if (useWallClockTime)
+            {
+                // The buffer can be restored from its changelog after Init: check it once on the first punctuation.
+                TaskScheduled startup = null;
+                startup = Context.Task.RegisterScheduleTask(TimeSpan.FromMilliseconds(1),
+                    PunctuationType.PROCESSING_TIME, now =>
+                    {
+                        startup.Cancel();
+                        EvictExpiredWallClock(now);
+                    });
+            }
         }
 
         public override void Process(K key, Change<V> value)
@@ -59,6 +78,8 @@ namespace Streamiz.Kafka.Net.Processors
             observedStreamTime = Math.Max(observedStreamTime, Context.Timestamp);
             Buffer(key, value);
             EnforceConstraints();
+            if (useWallClockTime)
+                ScheduleNextWallClockEviction();
         }
 
         private void Buffer(K key, Change<V> value)
@@ -67,10 +88,43 @@ namespace Streamiz.Kafka.Net.Processors
             buffer.Put(bufferTime, key, value, Context.RecordContext);
         }
 
+        private void EvictExpired(long expiryTime)
+            => buffer.EvictWhile(() => buffer.MinTimestamp <= expiryTime, Emit);
+
+        private void EvictExpiredWallClock(long now)
+        {
+            EvictExpired(now - suppressionDurationMs);
+            ScheduleNextWallClockEviction();
+        }
+
+        // Punctuate only when a record is due (and not periodically), so nothing runs while the buffer is empty.
+        private void ScheduleNextWallClockEviction()
+        {
+            long dueTime = buffer.MinTimestamp == long.MaxValue
+                ? -1
+                : buffer.MinTimestamp + suppressionDurationMs;
+
+            if (dueTime == evictionPunctuationDueTime)
+                return;
+
+            if (evictionPunctuation is {IsCancelled: false})
+                evictionPunctuation.Cancel();
+            evictionPunctuation = null;
+            evictionPunctuationDueTime = dueTime;
+
+            if (dueTime < 0)
+                return;
+
+            var delay = TimeSpan.FromMilliseconds(Math.Max(1, dueTime - Context.WallClockTime));
+            evictionPunctuation = Context.Task.RegisterScheduleTask(delay, PunctuationType.PROCESSING_TIME,
+                EvictExpiredWallClock);
+        }
+
         private void EnforceConstraints()
         {
-            long expiryTime = observedStreamTime - suppressionDurationMs;
-            buffer.EvictWhile(() => buffer.MinTimestamp <= expiryTime, Emit);
+            // buffer times are wall-clock times in wall-clock mode, stream times otherwise
+            long now = useWallClockTime ? Context.WallClockTime : observedStreamTime;
+            EvictExpired(now - suppressionDurationMs);
 
             if (OverCapacity)
             {

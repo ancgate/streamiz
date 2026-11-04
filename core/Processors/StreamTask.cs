@@ -505,13 +505,14 @@ namespace Streamiz.Kafka.Net.Processors
 
             bool punctuated = false;
 
+            // snapshot: a punctuator can schedule or cancel punctuations while they are executed
             foreach (var taskScheduled in systemTimePunctuationQueue
-                .Where(t => t.CanExecute(systemTime)))
+                .Where(t => t.CanExecute(systemTime)).ToList())
             {
                 Context.CurrentProcessor = taskScheduled.Processor;
                 Context.SetUnknownRecordMetaData(systemTime);
-                taskScheduled.Execute(systemTime);
-                punctuated = true;
+                if (taskScheduled.Execute(systemTime))
+                    punctuated = true;
             }
 
             Context.CurrentProcessor = null;

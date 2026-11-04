@@ -322,4 +322,166 @@ public class KTableSuppressTests
         Assert.AreEqual(1L, records[0].Message.Value);
         Assert.AreEqual("header", records[0].Message.Headers[0].Key);
     }
+
+    #region Wall-clock time limit (KIP-424)
+
+    private static readonly TimeSpan WallClockLimit = TimeSpan.FromMinutes(1);
+
+    private StreamBuilder BuildTableTopology(Suppressed<string, string> suppressed)
+    {
+        var builder = new StreamBuilder();
+
+        builder.Table("input", new StringSerDes(), new StringSerDes(),
+                InMemory.As<string, string>("table-store"))
+            .Suppress(suppressed
+                .WithKeySerdes(new StringSerDes())
+                .WithValueSerdes(new StringSerDes()))
+            .ToStream()
+            .To("output", new StringSerDes(), new StringSerDes());
+
+        return builder;
+    }
+
+    private (TopologyTestDriver driver, TestInputTopic<string, string> input, TestOutputTopic<string, string> output)
+        CreateWallClockDriver(IBufferConfig bufferConfig)
+    {
+        var builder = BuildTableTopology(
+            SuppressedBuilder.UntilWallClockTimeLimit<string, string>(WallClockLimit, bufferConfig));
+        var driver = new TopologyTestDriver(builder.Build(), streamConfig);
+        var input = driver.CreateInputTopic("input", new StringSerDes(), new StringSerDes());
+        var output = driver.CreateOutputTopic("output", TimeSpan.FromSeconds(5), new StringSerDes(), new StringSerDes());
+        return (driver, input, output);
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldNotEmitBeforeTheLimit()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(30));
+
+            Assert.AreEqual(0, output.ReadKeyValueList().Count());
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldEmitWithoutNewRecords()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            driver.AdvanceWallClockTime(WallClockLimit.Add(TimeSpan.FromSeconds(1)));
+
+            var records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("key1", records[0].Message.Key);
+            Assert.AreEqual("value1", records[0].Message.Value);
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldEmitOnlyTheLatestValueOfAKey()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded().WithLoggingDisabled());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            input.PipeInput("key1", "value2", dt);
+            input.PipeInput("key1", "value3", dt);
+            driver.AdvanceWallClockTime(WallClockLimit.Add(TimeSpan.FromSeconds(1)));
+
+            var records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("value3", records[0].Message.Value);
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldNotRestartTheTimerWhenAKeyIsUpdated()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(40));
+            input.PipeInput("key1", "value2", dt);
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(21));
+
+            var records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("value2", records[0].Message.Value);
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldEmitEachKeyWhenItsOwnLimitIsReached()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(30));
+            input.PipeInput("key2", "value2", dt);
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(31));
+
+            var records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("key1", records[0].Message.Key);
+
+            driver.AdvanceWallClockTime(TimeSpan.FromSeconds(30));
+            records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("key2", records[0].Message.Key);
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldIgnoreStreamTime()
+    {
+        var (driver, input, output) = CreateWallClockDriver(StrictBufferConfig.Unbounded());
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            // stream time jumps far ahead, but the wall clock does not move
+            input.PipeInput("key2", "value2", dt.AddHours(1));
+
+            Assert.AreEqual(0, output.ReadKeyValueList().Count());
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldEmitEarlyWhenOverRecordCapacity()
+    {
+        var (driver, input, output) = CreateWallClockDriver(EagerConfig.EmitEarlyWhenFull(1));
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            input.PipeInput("key2", "value2", dt);
+
+            var records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("key1", records[0].Message.Key);
+
+            driver.AdvanceWallClockTime(WallClockLimit.Add(TimeSpan.FromSeconds(1)));
+            records = output.ReadKeyValueList().ToList();
+            Assert.AreEqual(1, records.Count);
+            Assert.AreEqual("key2", records[0].Message.Key);
+        }
+    }
+
+    [Test]
+    public void WallClockTimeLimitShouldShutDownWhenOverRecordCapacity()
+    {
+        var (driver, input, _) = CreateWallClockDriver(StrictBufferConfig.Bounded(1));
+        using (driver)
+        {
+            input.PipeInput("key1", "value1", dt);
+            Assert.Throws<StreamsException>(() => input.PipeInput("key2", "value2", dt));
+        }
+    }
+
+    #endregion
 }

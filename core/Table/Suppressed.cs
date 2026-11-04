@@ -59,6 +59,30 @@ namespace Streamiz.Kafka.Net.Table
                 bufferConfig, 
                 (context, _) => context.Timestamp,
                 false);
+
+        /// <summary>
+        /// Configure the suppression to wait a specific amount of wall-clock time after receiving a record before emitting it further downstream.
+        /// If another record for the same key arrives in the mean time, it replaces the first record in the buffer but does not re-start the timer.
+        /// <para>
+        /// Unlike <see cref="UntilTimeLimit{K,V}"/>, which only moves forward when new records advance the stream time,
+        /// the buffered records are emitted when the wall-clock time limit is reached, even if no new records arrive (KIP-424).
+        /// A processing-time punctuation is scheduled for when the oldest buffered record is due, so the emission precision
+        /// depends on how often the stream thread runs punctuations (it can be delayed while the thread processes a large batch).
+        /// </para>
+        /// </summary>
+        /// <param name="timeToWaitMoreEvents">The amount of wall-clock time to wait, per record, for new events.</param>
+        /// <param name="bufferConfig">A configuration specifying how much space to use for buffering intermediate results.</param>
+        /// <typeparam name="K">Key type</typeparam>
+        /// <typeparam name="V">Value type</typeparam>
+        /// <returns>a suppression configuration</returns>
+        public static Suppressed<K, V> UntilWallClockTimeLimit<K, V>(TimeSpan timeToWaitMoreEvents, IBufferConfig bufferConfig)
+            => new(
+                null,
+                timeToWaitMoreEvents,
+                bufferConfig,
+                (context, _) => context.WallClockTime,
+                false,
+                true);
     }
 
     /// <summary>
@@ -305,6 +329,12 @@ namespace Streamiz.Kafka.Net.Table
         public bool SafeToDropTombstones { get; }
         
         /// <summary>
+        /// True if the buffer time is the wall-clock time (see <see cref="SuppressedBuilder.UntilWallClockTimeLimit{K,V}"/>),
+        /// false if it is the stream time.
+        /// </summary>
+        public bool UseWallClockTime { get; }
+
+        /// <summary>
         /// Name of the suppress processor
         /// </summary>
         public string Name { get; internal set; }
@@ -324,13 +354,15 @@ namespace Streamiz.Kafka.Net.Table
             TimeSpan suppressionTime,
             IBufferConfig bufferConfig,
             Func<ProcessorContext, K, long> timeDefinition,
-            bool safeToDropTombstones)
+            bool safeToDropTombstones,
+            bool useWallClockTime = false)
         {
             Name = name;
             SuppressionTime = suppressionTime;
             BufferConfig = bufferConfig;
             TimeDefinition = timeDefinition;
             SafeToDropTombstones = safeToDropTombstones;
+            UseWallClockTime = useWallClockTime;
         }
 
         /// <summary>
