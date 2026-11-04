@@ -1,4 +1,5 @@
 ﻿using Streamiz.Kafka.Net.Crosscutting;
+using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.State.Supplier;
 using Streamiz.Kafka.Net.Table;
 
@@ -16,6 +17,9 @@ namespace Streamiz.Kafka.Net.State.Internal
         public IStoreBuilder<ITimestampedKeyValueStore<K, V>> Materialize()
         {
             IKeyValueBytesStoreSupplier supplier = (IKeyValueBytesStoreSupplier)materialized.StoreSupplier;
+            if (supplier is IVersionedBytesStoreSupplier)
+                throw new TopologyException(
+                    $"The store {materialized.StoreName} is a versioned store: versioned stores are only supported to materialize source KTables (StreamBuilder.Table)");
             if (supplier == null)
             {
                 supplier = Stores.DefaultKeyValueStore(materialized.StoreName);

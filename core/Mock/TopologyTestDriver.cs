@@ -395,6 +395,21 @@ namespace Streamiz.Kafka.Net.Mock
         public IReadOnlySessionStore<K, V> GetSessionStore<K, V>(string name)
             => behavior.GetStateStore<K, V>(name) as IReadOnlySessionStore<K, V>;
 
+        /// <summary>
+        /// Get the <see cref="IVersionedKeyValueStore{K, V}"/> with the given name.
+        /// The store can be a "regular" or global store.
+        /// <p>
+        /// This is often useful in test cases to pre-populate the store before the test case instructs the topology to
+        /// <see cref="TestInputTopic{K, V}.PipeInput(K, V, DateTime, Headers)"/> process an input message, and/or to check the store afterward.
+        /// </p>
+        /// </summary>
+        /// <param name="name">the name of the store</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">value type</typeparam>
+        /// <returns>the versioned store, or null if no versioned store has been registered with the given name</returns>
+        public IVersionedKeyValueStore<K, V> GetVersionedKeyValueStore<K, V>(string name)
+            => behavior.GetStateStore<K, V>(name) as IVersionedKeyValueStore<K, V>;
+
         #endregion
 
         #region Property

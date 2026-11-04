@@ -19,6 +19,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         public IDictionary<string, string> LogConfig => storeBuilder.LogConfig;
         public bool IsWindowStore => storeBuilder.IsWindowStore;
         public long RetentionMs => storeBuilder.RetentionMs;
+        public bool IsVersionedStore => storeBuilder is IVersionedStoreBuilder;
+        public long HistoryRetentionMs => (storeBuilder as IVersionedStoreBuilder)?.HistoryRetentionMs ?? 0;
 
         public IStateStore Build(TaskId taskId, IStreamConfig config)
         {

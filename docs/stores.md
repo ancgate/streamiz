@@ -116,6 +116,43 @@ builder
         .To<StringTimeWindowedSerDes, Int32SerDes>("output");
 ```
 
+## Versioned key/value store
+
+A versioned key/value store (KIP-889) keeps the history of each key: every record is a version of its key, valid from its timestamp until the timestamp of the next record. The history is kept for the **history retention**, which is also the store's grace period: a record older than stream time minus the history retention is not put.
+
+``` csharp
+IVersionedKeyValueStore<string, string> store = ...;
+store.Put("key", "v1", 1000);
+store.Put("key", "v3", 3000);
+store.Put("key", "v2", 2000);  // out-of-order: inserted in the history, returns its validTo (3000)
+
+store.Get("key");              // v3 (timestamp 3000), the latest record
+store.Get("key", 2500);        // v2 (timestamp 2000, validTo 3000)
+store.Delete("key", 4000);     // a tombstone: returns the record valid at 4000 (v3)
+store.Get("key", 3500);        // v3 (validTo 4000)
+store.Get("key");              // null
+```
+
+`Put` returns `VersionedKeyValueStoreReturnCodes.PUT_RETURN_CODE_VALID_TO_UNDEFINED` when the record is the latest one, `PUT_RETURN_CODE_NOT_PUT` when it is older than the history retention, otherwise the timestamp of the next newer record. `Get(key, asOfTimestamp)` returns null when `asOfTimestamp` is older than the history retention.
+
+Two implementations are available:
+- `Stores.InMemoryVersionedKeyValueStore(name, historyRetention)` (or `InMemoryVersioned.As<K, V>(name, historyRetention)`),
+- `Stores.PersistentVersionedKeyValueStore(name, historyRetention, segmentInterval)` (or `RocksDbVersioned.As<K, V>(...)`): the latest values are in one RocksDB database, and the older versions in time segments (by default `max(historyRetention / 3, 2s)` long), dropped once they are older than the history retention.
+
+Versioned stores are supported to materialize **source KTables**:
+
+``` csharp
+builder.Table("topic", RocksDbVersioned.As<string, string>("table-store", TimeSpan.FromMinutes(5)));
+```
+
+With a versioned source table, an out-of-order record (older than the latest value of its key) is written in the history but doesn't change the table, so it is not forwarded downstream. A record older than the history retention is dropped. Joins and value getters read the latest value. Use `QueryableStoreTypes.VersionedKeyValueStore<K, V>()` for interactive queries and `TopologyTestDriver.GetVersionedKeyValueStore<K, V>(name)` in tests.
+
+Limitations:
+- versioned stores are not supported for global tables, aggregations or other materialized operations (a `TopologyException` is thrown),
+- versioned stores are never cached: the caching settings are ignored,
+- the changelog topic is compacted, with `min.compaction.lag.ms` = history retention + `WindowStoreChangelogAdditionalRetentionMs`,
+- after a restart without restoration, the stream time of a RocksDB versioned store starts again from the next record.
+
 ## Caching
 
 **This feature is available in `EARLY ACCESS` only.**

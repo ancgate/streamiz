@@ -130,6 +130,49 @@ namespace Streamiz.Kafka.Net.State
             => new SessionStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
 
         /// <summary>
+        /// Create a persistent (RocksDB) <see cref="IVersionedBytesStoreSupplier"/> (KIP-889).
+        /// Pass it to <c>Materialized.Create(...)</c> to materialize a source KTable as a versioned store.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="historyRetention">how long the older versions are kept (cannot be negative); it's also the grace period:
+        /// records older than stream time minus the history retention are not put</param>
+        /// <param name="segmentInterval">size of the segments of older versions, in milliseconds (default: max(history retention / 3, 2 seconds))</param>
+        /// <returns>an instance of a <see cref="IVersionedBytesStoreSupplier"/></returns>
+        public static IVersionedBytesStoreSupplier PersistentVersionedKeyValueStore(string name, TimeSpan historyRetention, long? segmentInterval = null)
+        {
+            if (historyRetention < TimeSpan.Zero)
+                throw new ArgumentException("historyRetention cannot be negative");
+            return new RocksDbVersionedKeyValueBytesStoreSupplier(name, historyRetention, segmentInterval);
+        }
+
+        /// <summary>
+        /// Create an in-memory <see cref="IVersionedBytesStoreSupplier"/> (KIP-889).
+        /// Pass it to <c>Materialized.Create(...)</c> to materialize a source KTable as a versioned store.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="historyRetention">how long the older versions are kept (cannot be negative); it's also the grace period:
+        /// records older than stream time minus the history retention are not put</param>
+        /// <returns>an instance of a <see cref="IVersionedBytesStoreSupplier"/></returns>
+        public static IVersionedBytesStoreSupplier InMemoryVersionedKeyValueStore(string name, TimeSpan historyRetention)
+        {
+            if (historyRetention < TimeSpan.Zero)
+                throw new ArgumentException("historyRetention cannot be negative");
+            return new InMemoryVersionedKeyValueBytesStoreSupplier(name, historyRetention);
+        }
+
+        /// <summary>
+        /// Creates a <see cref="IStoreBuilder{T}"/> that can be used to build a <see cref="IVersionedKeyValueStore{K, V}"/>.
+        /// </summary>
+        /// <param name="supplier">a <see cref="IVersionedBytesStoreSupplier"/> (cannot be null)</param>
+        /// <param name="keySerdes">the key serde to use</param>
+        /// <param name="valueSerdes">the value serde to use</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">value type</typeparam>
+        /// <returns>an instance of <see cref="IStoreBuilder{T}"/> than can build a <see cref="IVersionedKeyValueStore{K, V}"/></returns>
+        public static IStoreBuilder<IVersionedKeyValueStore<K, V>> VersionedKeyValueStoreBuilder<K, V>(IVersionedBytesStoreSupplier supplier, ISerDes<K> keySerdes, ISerDes<V> valueSerdes)
+            => new VersionedKeyValueStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
+
+        /// <summary>
         /// Creates a <see cref="IStoreBuilder"/> that can be used to build a <see cref="ITimestampedKeyValueStore{K, V}"/>.
         /// </summary>
         /// <param name="supplier">a <see cref="IKeyValueBytesStoreSupplier"/> (cannot be null)</param>

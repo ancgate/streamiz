@@ -1,4 +1,5 @@
 ﻿using Streamiz.Kafka.Net.Crosscutting;
+using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.Processors.Internal;
 using Streamiz.Kafka.Net.State;
@@ -54,15 +55,36 @@ namespace Streamiz.Kafka.Net.Table.Internal.Graph.Nodes
                    "} " + base.ToString();
         }
 
+        private static void DisableLogging(IStoreBuilder storeBuilder)
+        {
+            switch (storeBuilder)
+            {
+                case IStoreBuilder<State.ITimestampedKeyValueStore<K, V>> timestamped:
+                    timestamped.WithLoggingDisabled();
+                    break;
+                case IStoreBuilder<IVersionedKeyValueStore<K, V>> versioned:
+                    versioned.WithLoggingDisabled();
+                    break;
+            }
+        }
+
         public override void WriteToTopology(InternalTopologyBuilder builder)
         {
-            // TODO: we assume source KTables can only be timestamped-key-value stores for now.
-            // should be expanded for other types of stores as well.
-            IStoreBuilder<State.ITimestampedKeyValueStore<K, V>> storeBuilder = new TimestampedKeyValueStoreMaterializer<K, V>(materialized as Materialized<K, V, IKeyValueStore<Bytes, byte[]>>).Materialize();
+            // source KTables are timestamped key-value stores, or versioned key-value stores (KIP-889)
+            var keyValueMaterialized = materialized as Materialized<K, V, IKeyValueStore<Bytes, byte[]>>;
+            IStoreBuilder storeBuilder;
+            if (VersionedKeyValueStoreMaterializer<K, V>.IsVersioned(keyValueMaterialized))
+            {
+                if (isGlobalKTable)
+                    throw new TopologyException($"Versioned stores are not supported for global tables (store {keyValueMaterialized.StoreName})");
+                storeBuilder = new VersionedKeyValueStoreMaterializer<K, V>(keyValueMaterialized).Materialize();
+            }
+            else
+                storeBuilder = new TimestampedKeyValueStoreMaterializer<K, V>(keyValueMaterialized).Materialize();
 
             if (isGlobalKTable)
             {
-                builder.AddGlobalStore(topicName, storeBuilder, sourceName, consumed, processorParameters, false);
+                builder.AddGlobalStore(topicName, (IStoreBuilder<State.ITimestampedKeyValueStore<K, V>>) storeBuilder, sourceName, consumed, processorParameters, false);
             }
             else
             {
@@ -77,7 +99,7 @@ namespace Streamiz.Kafka.Net.Table.Internal.Graph.Nodes
 
                     if (shouldReuseSourceTopicForChangelog)
                     {
-                        storeBuilder.WithLoggingDisabled();
+                        DisableLogging(storeBuilder);
                         builder.ConnectSourceStoreAndTopic(storeBuilder.Name, topicName);
                     }
                 }

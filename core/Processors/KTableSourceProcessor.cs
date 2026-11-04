@@ -11,7 +11,7 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly string queryableName;
         private readonly bool sendOldValues;
 
-        private ITimestampedKeyValueStore<K, V> store;
+        private KeyValueStoreWrapper<K, V> store;
         private TimestampedTupleForwarder<K, V> tupleForwarder;
 
         public KTableSourceProcessor(string storeName, string queryableName, bool sendOldValues)
@@ -27,10 +27,10 @@ namespace Streamiz.Kafka.Net.Processors
 
             if (this.queryableName != null)
             {
-                store = (ITimestampedKeyValueStore<K, V>)context.GetStateStore(queryableName);
+                store = new KeyValueStoreWrapper<K, V>(context, queryableName);
                 tupleForwarder = new TimestampedTupleForwarder<K, V>(
-                    store,
-                    this, 
+                    store.Store,
+                    this,
                     kv => {
                         context.CurrentProcessor = this;
                         context.CurrentProcessor.Forward(kv.Key,
@@ -67,7 +67,19 @@ namespace Streamiz.Kafka.Net.Processors
                 {
                     oldValue = default(V);
                 }
-                store.Put(key, ValueAndTimestamp<V>.Make(value, Context.Timestamp));
+
+                long putReturnCode = store.Put(key, value, Context.Timestamp);
+
+                // versioned store (KIP-914): a record which was not put (older than the history retention), or which is not
+                // the latest value of its key (out-of-order record, written in the history), doesn't change the table
+                if (putReturnCode != KeyValueStoreWrapper<K, V>.PUT_RETURN_CODE_IS_LATEST)
+                {
+                    log.LogDebug(
+                        "{LogPrefix}Record (topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]) is not the latest value of its key in the versioned store {Store}, it is not forwarded",
+                        logPrefix, Context.Topic, Context.Partition, Context.Offset, store.Name);
+                    return;
+                }
+
                 tupleForwarder.MaybeForward(key, value, oldValue);
             }
             else

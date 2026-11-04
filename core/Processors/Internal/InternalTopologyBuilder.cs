@@ -768,6 +768,16 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
         private InternalTopicConfig CreateChangelogTopicConfig(StateStoreFactory stateStoreFactory, string changelogTopic)
         {
+            if (stateStoreFactory.IsVersionedStore)
+            {
+                return new VersionedChangelogTopicConfig
+                {
+                    Configs = stateStoreFactory.LogConfig,
+                    Name = changelogTopic,
+                    HistoryRetentionMs = stateStoreFactory.HistoryRetentionMs
+                };
+            }
+
             if (stateStoreFactory.IsWindowStore)
             {
                 var windowChangelogTopicConfig = new WindowedChangelogTopicConfig

@@ -27,7 +27,7 @@ namespace Streamiz.Kafka.Net.Processors
             }
             else
             {
-                this.Forward(key, new Change<VR>(oldValue, newValue));
+                this.Forward(key, new Change<VR>(oldValue, newValue, value.IsLatest));
             }
         }
 
