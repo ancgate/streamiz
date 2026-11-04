@@ -37,7 +37,7 @@ namespace Streamiz.Kafka.Net.Mock.Kafka
             });
         }
 
-        public new Task<List<DeleteRecordsResult>> DeleteRecordsAsync(IEnumerable<TopicPartitionOffset> topicPartitionOffsets, DeleteRecordsOptions options = null)
+        public override Task<List<DeleteRecordsResult>> DeleteRecordsAsync(IEnumerable<TopicPartitionOffset> topicPartitionOffsets, DeleteRecordsOptions options = null)
         {
             var result = cluster.DeleteRecords(topicPartitionOffsets);
             return Task.FromResult(result);

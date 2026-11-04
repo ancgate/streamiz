@@ -132,6 +132,10 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly Sensor commitRatioSensor;
         private Exception exception;
 
+        // Records that failed and were skipped by the InnerExceptionHandler (CONTINUE).
+        // They are dropped when consumed again after the thread rejoins the group.
+        private readonly HashSet<(string Topic, int Partition, long Offset)> recordsToSkip = new();
+
         public event ThreadStateListener StateChanged;
 
         private StreamThread(string threadId, string clientId, TaskManager manager, IConsumer<byte[], byte[]> consumer,
@@ -217,8 +221,9 @@ namespace Streamiz.Kafka.Net.Processors
                                 break;
                             if (response == ExceptionHandlerResponse.CONTINUE)
                             {
+                                var failedException = exception;
                                 exception = null;
-                                HandleInnerException();
+                                HandleInnerException(failedException);
                             }
                         }
 
@@ -427,6 +432,15 @@ namespace Streamiz.Kafka.Net.Processors
             foreach (var record in records)
             {
                 count++;
+
+                if (recordsToSkip.Count > 0 && recordsToSkip.Remove(FailedRecordInfo.Key(record)))
+                {
+                    log.LogWarning(
+                        "{LogPrefix}Skipping record (Topic:{Topic}|Partition:{Partition}|Offset:{Offset}) because it previously failed and the InnerExceptionHandler returned CONTINUE",
+                        logPrefix, record.Topic, record.Partition.Value, record.Offset.Value);
+                    continue;
+                }
+
                 var task = Manager.ActiveTaskFor(record.TopicPartition);
                 if (task != null)
                 {
@@ -498,11 +512,19 @@ namespace Streamiz.Kafka.Net.Processors
             consumer.Subscribe(builder.GetSourceTopics());
         }
 
-        private void HandleInnerException()
+        private void HandleInnerException(Exception innerException)
         {
             log.LogWarning(
                 "{LogPrefix}Detected that the thread throw an inner exception. Your configuration manager has decided to continue running stream processing. So will close out all assigned tasks and rejoin the consumer group",
                 logPrefix);
+
+            if (FailedRecordInfo.TryGet(innerException, out var failedRecord))
+            {
+                log.LogWarning(
+                    "{LogPrefix}The record which raised the exception (Topic:{Topic}|Partition:{Partition}|Offset:{Offset}) will be skipped",
+                    logPrefix, failedRecord.Topic, failedRecord.Partition, failedRecord.Offset);
+                recordsToSkip.Add(failedRecord);
+            }
 
             Manager.HandleLostAll();
             consumer.Unsubscribe();

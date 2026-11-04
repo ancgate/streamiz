@@ -441,7 +441,16 @@ namespace Streamiz.Kafka.Net.Processors
             var recordInfo = $"Topic:{record.Record.Topic}|Partition:{record.Record.Partition.Value}|Offset:{record.Record.Offset}|Timestamp:{record.Record.Message.Timestamp.UnixTimestampMs}";
 
             log.LogDebug($"{logPrefix}Start processing one record [{recordInfo}]");
-            long latency = ActionHelper.MeasureLatency(() => record.Processor.Process(record.Record));
+            long latency;
+            try
+            {
+                latency = ActionHelper.MeasureLatency(() => record.Processor.Process(record.Record));
+            }
+            catch (Exception e) when (e is not TaskMigratedException)
+            {
+                FailedRecordInfo.Attach(e, record.Record);
+                throw;
+            }
             log.LogDebug($"{logPrefix}Completed processing one record [{recordInfo}]");
 
             consumedOffsets.AddOrUpdate(record.Record.TopicPartition, record.Record.Offset);

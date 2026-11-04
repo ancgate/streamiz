@@ -100,7 +100,9 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 }
                 catch (Exception e)
                 {
-                    throw new StreamsException("Fatal error in Timestamp extractor callback", e);
+                    var exception = new StreamsException("Fatal error in Timestamp extractor callback", e);
+                    FailedRecordInfo.Attach(exception, record);
+                    throw exception;
                 }
 
                 log.LogDebug("");

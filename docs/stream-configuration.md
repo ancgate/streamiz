@@ -198,6 +198,9 @@ If this number is exceeded, the consumer pauses for this partition until stream 
 
 Inner exception handling function called during processing.
 
+- `FAIL` (default): the stream thread stops.
+- `CONTINUE`: the stream thread closes its tasks, rejoins the consumer group and keeps processing from the last committed offsets. If the exception was raised by one source record (in a processor, including `MapAsync`/`ForeachAsync`..., or in the timestamp extractor), that record is skipped when it is consumed again. Records processed after the last commit and before the failing record can be processed again (at-least-once).
+
 ### DeserializationExceptionHandler
 
 Deserialization exception handling function called when deserialization exception during kafka consumption is raise.

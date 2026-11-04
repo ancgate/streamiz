@@ -234,6 +234,11 @@ namespace Streamiz.Kafka.Net.Processors
                     throw;
                 }
             }
+            catch (Exception e)
+            {
+                FailedRecordInfo.Attach(e, recordToProcess);
+                throw;
+            }
             finally
             {
                 if(readingBuffer && !doNotDequeue)

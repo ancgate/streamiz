@@ -172,6 +172,10 @@ namespace Streamiz.Kafka.Net
 
         /// <summary>
         /// Inner exception handling function called during processing.
+        /// Return <see cref="ExceptionHandlerResponse.FAIL"/> to stop the stream thread, or
+        /// <see cref="ExceptionHandlerResponse.CONTINUE"/> to close the tasks, rejoin the consumer group and keep processing.
+        /// With CONTINUE, a source record that failed in a processor or in the timestamp extractor is skipped
+        /// when it is consumed again, so it is not processed in an endless loop.
         /// </summary>
         Func<Exception, ExceptionHandlerResponse> InnerExceptionHandler { get; set; }
 
@@ -2866,6 +2870,10 @@ namespace Streamiz.Kafka.Net
 
         /// <summary>
         /// Inner exception handling function called during processing.
+        /// Return <see cref="ExceptionHandlerResponse.FAIL"/> to stop the stream thread, or
+        /// <see cref="ExceptionHandlerResponse.CONTINUE"/> to close the tasks, rejoin the consumer group and keep processing.
+        /// With CONTINUE, a source record that failed in a processor or in the timestamp extractor is skipped
+        /// when it is consumed again, so it is not processed in an endless loop.
         /// </summary>
         [StreamConfigProperty("" + innerExceptionHandlerCst)]
         public Func<Exception, ExceptionHandlerResponse> InnerExceptionHandler

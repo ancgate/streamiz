@@ -34,6 +34,10 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly string logPrefix;
         private readonly Thread thread;
         
+        // Records that failed and were skipped by the InnerExceptionHandler (CONTINUE).
+        // They are dropped when consumed again after the thread rejoins the group.
+        private readonly HashSet<(string Topic, int Partition, long Offset)> recordsToSkip = new();
+
         private DateTime lastCommit = DateTime.Now;
         private DateTime lastMetrics = DateTime.Now;
 
@@ -102,8 +106,9 @@ namespace Streamiz.Kafka.Net.Processors
                             break;
                         if (response == ExceptionHandlerResponse.CONTINUE)
                         {
+                            var failedException = exception;
                             exception = null;
-                            HandleInnerException();
+                            HandleInnerException(failedException);
                         }
                     }
                     
@@ -115,6 +120,14 @@ namespace Streamiz.Kafka.Net.Processors
                         result = consumer.Consume(TimeSpan.FromMilliseconds(configuration.PollMs)));
                     
                     pollSensor.Record(pollLatency, now);
+
+                    if (result != null && recordsToSkip.Count > 0 &&
+                        recordsToSkip.Remove(FailedRecordInfo.Key(result)))
+                    {
+                        log.LogWarning(
+                            $"{logPrefix}Skipping record ({result.TopicPartitionOffset}) because it previously failed and the InnerExceptionHandler returned CONTINUE");
+                        result = null;
+                    }
                     
                     try
                     {
@@ -407,9 +420,16 @@ namespace Streamiz.Kafka.Net.Processors
             }
         }
         
-        private void HandleInnerException()
+        private void HandleInnerException(Exception innerException)
         {
             log.LogWarning($"{logPrefix}Detected that the thread throw an inner exception. Your configuration manager has decided to continue running stream processing. So will close out all assigned tasks and rejoin the consumer group");
+
+            if (FailedRecordInfo.TryGet(innerException, out var failedRecord))
+            {
+                log.LogWarning(
+                    $"{logPrefix}The record which raised the exception (Topic:{failedRecord.Topic}|Partition:{failedRecord.Partition}|Offset:{failedRecord.Offset}) will be skipped");
+                recordsToSkip.Add(failedRecord);
+            }
 
             CommitOffsets(true);
 

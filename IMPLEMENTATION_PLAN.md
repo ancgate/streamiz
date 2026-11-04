@@ -31,9 +31,10 @@ Each feature lists what exists today, how it would be built, the files it touche
 - So there is no channel to send host or standby information during a rebalance. That blocks standby replicas and remote Interactive Queries, which need their own way to share that information (section 6).
 
 **Bugs found along the way.** These are worth fixing before or alongside the features they affect:
-1. **Async `BUFFERED` retry can lose records.** If record N is buffered and N+1 succeeds, the offset for N+1 is committed and N is skipped. The buffer is also cleared on close. (`ExternalProcessorTopologyExecutor`)
-2. **Possible null reference in `ExternalStreamThread`.** On the `BUFFER_FULL` branch, when the poll returned no record, it reads `result.Topic` while `result` is null.
-3. **`InnerExceptionHandler` returning `CONTINUE` does not skip the failing record.** It re-subscribes without committing, so the poison record is consumed again.
+1. ~~Async `BUFFERED` retry can lose records.~~ **Not a bug.** Once a record is buffered, new records queue behind it (FIFO), and offsets are only committed for records already processed. Order and delivery are kept; the regression test `KStreamMapAsyncBufferedKeepsOrderAndDoesNotLoseRecords` covers it.
+2. ~~Possible null reference in `ExternalStreamThread`.~~ **Not reachable.** A call with no polled record never adds to the buffer, so it can't be the call that makes the buffer full.
+3. **Fixed:** `InnerExceptionHandler` returning `CONTINUE` replayed the failing record forever. This affected both the stream thread and the async (`MapAsync`...) thread. The failing record is now skipped when it is consumed again.
+   - Fixing it also exposed a test-infrastructure bug, now fixed. The in-memory cluster's admin client hid `DeleteRecordsAsync` with `new` instead of overriding it, so every async commit in `ASYNC_CLUSTER_IN_MEMORY` tests threw `NotImplementedException`.
 4. **Azure remote store problems:**
    - `Put(key, null)` stores null instead of deleting.
    - `Range` uses a comparer the Azure SDK cannot translate (it only works against the mock), and it doesn't filter by `PartitionKey`.
@@ -46,7 +47,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 | Phase | Features | Why this order |
 |---|---|---|
 | 1. Quick wins | `AlterRecordTimestamp` rename, KIP-612 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
-| 2. Error handling | Processing exception handler + dead letter queue, at-most-once, bug fixes 1–3 | Users ask for these often; small blast radius |
+| 2. Error handling | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
 | 3. Windowing | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
 | 5. Time-aware state | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
@@ -138,7 +139,7 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 - Handlers exist for deserialization, production and "inner" errors.
 - There is no per-record processing handler (Kafka's KIP-1033), and `StreamTask.Process` has no try/catch.
 - There is no DLQ (KIP-1034).
-- `InnerExceptionHandler` returning `CONTINUE` replays the poison record (bug 3).
+- `InnerExceptionHandler` returning `CONTINUE` now skips the failing record (bug 3, fixed). It still closes all tasks and rejoins the group, which is heavy for a single bad record. The per-record handler below avoids that.
 
 **Plan:**
 - **New per-record handler.** Add `ProcessingExceptionHandler(ErrorHandlerContext, record, Exception) → FAIL | CONTINUE`, configured in `StreamConfig`.
@@ -151,7 +152,7 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
   - Add headers: `__streamiz.errors.exception`, `.message`, `.stacktrace`, `.topic`, `.partition`, `.offset`.
   - Under EOS, the DLQ write is part of the same transaction.
 - **Advanced hook.** Handlers can return extra `ProducerRecord`s to send as well.
-- **Bug fix.** Fix `InnerExceptionHandler` `CONTINUE` by committing past the failing record, or by pointing users to the new handler and documenting the difference.
+- **Docs.** Explain when to use the new per-record handler and when to use `InnerExceptionHandler`.
 
 **Files:**
 - `StreamConfig.cs`, `ExceptionHandlerResponse.cs`
@@ -178,11 +179,9 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 - `StreamConfigTests`.
 - A `TaskManagerTests` / `StreamThreadTests` case: crash after commit and before processing, and assert the record is not replayed.
 
-### 2.3 Async bug fixes 1 and 2 (S)
+### 2.3 Async bug fixes (done)
 
-- Track committed offsets as "lowest still-buffered offset − 1" per partition, not as "last processed".
-- Guard the null `result` path.
-- Add regression tests in `KStreamMapAsyncTests`.
+Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tests in `InnerExceptionHandlerTests` and `KStreamMapAsyncTests`.
 
 ---
 
