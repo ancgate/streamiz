@@ -491,6 +491,14 @@ config["azure.remote.storage.account.key"] = "MASTER_KEY";
 var table = builder.Table("table-input", AzureRemoteStorage.As<string, string>());
 ```
 
+#### Behaviour
+
+- Each store is an Azure table. The table name is the store name with only its letters and digits kept (it must start with a letter and have 3 to 63 characters).
+- The partition key of an entity is the task id, so each task only reads and writes its own entities.
+- Putting a `null` value deletes the entity, and `Delete` returns the previous value.
+- `PutAll` writes the entities in transactions of at most 100 entities (an Azure limit). Deletes are sent one by one.
+- `Range`, `ReverseRange`, `All` and `ReverseAll` read all the entities of the task and filter and sort them by key bytes in the application, because Azure Tables can't compare byte arrays. They are fine for small stores, but each call reads the task's whole partition.
+- `ApproximateNumEntries` returns 0: Azure Tables can't count entities without reading all of them.
 
 ### GCP Bigtable Key/Value store
 
