@@ -100,6 +100,9 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
         }
         
         internal void InvokeEvictionCallbacks() => _tokens?.InvokeEvictionCallbacks(this);
+
+        // true if the entry had eviction callbacks, which are removed without being invoked
+        internal bool TakeEvictionCallbacks() => _tokens?.TakeEvictionCallbacks() ?? false;
         
         private CacheEntryTokens GetOrCreateTokens()
         {

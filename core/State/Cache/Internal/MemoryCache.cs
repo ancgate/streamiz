@@ -31,6 +31,14 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
 
         internal long Capacity => _options.SizeLimit;
 
+        /// <summary>
+        /// When it is set, the entries evicted by one compaction (<see cref="Compact(double)"/>, or the compaction when
+        /// the cache is over capacity) are given to this callback in one call, in eviction order (least recently used first),
+        /// instead of invoking the eviction callback of each entry. Other evictions (replaced or removed entries) still invoke
+        /// the callback of the entry.
+        /// </summary>
+        internal Action<IReadOnlyList<EvictedCacheEntry<K, V>>> BatchEvictionCallback { get; set; }
+
         private readonly List<WeakReference<Stats>> _allStats;
         private readonly Stats _accumulatedStats;
         private readonly ThreadLocal<Stats> _stats;
@@ -189,8 +197,20 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
             else
             {
                 TriggerOvercapacityCompaction();
-                coherentState.Entries.TryAdd(entry.Key, entry);
-                Interlocked.Add(ref coherentState.CacheSize, entry.Size);
+
+                // the compaction may have evicted the prior entry: otherwise it is replaced, as when the cache isn't full
+                // (TryAdd alone would keep the prior entry and lose the new value)
+                if (coherentState.Entries.TryGetValue(entry.Key, out CacheEntry<K, V> remainingPriorEntry))
+                {
+                    coherentState.Entries.AddOrUpdate(entry.Key, entry);
+                    Interlocked.Add(ref coherentState.CacheSize, entry.Size - remainingPriorEntry.Size);
+                    remainingPriorEntry.InvokeEvictionCallbacks();
+                }
+                else
+                {
+                    coherentState.Entries.TryAdd(entry.Key, entry);
+                    Interlocked.Add(ref coherentState.CacheSize, entry.Size);
+                }
             }
         }
 
@@ -446,8 +466,38 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
                     _coherentState.Entries.OrderBy(e => e.Value.LastAccessed))
                 entriesToRemove.Add(entry.Value);
             
+            RemoveEntries(entriesToRemove, _coherentState);
+        }
+
+        private void RemoveEntries(List<CacheEntry<K, V>> entriesToRemove, CoherentState<K, V> coherentState)
+        {
+            var batchEvictionCallback = BatchEvictionCallback;
+            if (batchEvictionCallback == null)
+            {
+                foreach (CacheEntry<K, V> entry in entriesToRemove)
+                    coherentState.RemoveEntry(entry, _options);
+                return;
+            }
+
+            var evictedEntries = new List<EvictedCacheEntry<K, V>>(entriesToRemove.Count);
             foreach (CacheEntry<K, V> entry in entriesToRemove)
-                _coherentState.RemoveEntry(entry, _options);
+            {
+                if (coherentState.TryRemoveEntry(entry) && entry.TakeEvictionCallbacks())
+                    evictedEntries.Add(new EvictedCacheEntry<K, V>(entry.Key, entry.Value, entry.EvictionReason));
+            }
+
+            if (evictedEntries.Count == 0)
+                return;
+
+            try
+            {
+                batchEvictionCallback(evictedEntries);
+            }
+            catch (Exception e)
+            {
+                // same behavior as the eviction callback of one entry
+                Logger.LogError(e, "Batch eviction callback invoked failed");
+            }
         }
 
         private void Compact(long removalSizeTarget, Func<CacheEntry<K, V>, long> computeEntrySize, CoherentState<K, V> coherentState)
@@ -457,8 +507,7 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
 
             ExpireLruBucket(ref removedSize, removalSizeTarget, computeEntrySize, entriesToRemove, coherentState.Entries);
 
-            foreach (CacheEntry<K, V> entry in entriesToRemove)
-                coherentState.RemoveEntry(entry, _options);
+            RemoveEntries(entriesToRemove, coherentState);
 
             // Expire the least recently used objects.
             static void ExpireLruBucket(ref long removedSize, long removalSizeTarget, Func<CacheEntry<K, V>, long> computeEntrySize, List<CacheEntry<K, V>> entriesToRemove, ConcurrentSortedDictionary<K, CacheEntry<K, V>> priorityEntries)
@@ -554,11 +603,17 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
 
             internal void RemoveEntry(CacheEntry<K, V> entry, MemoryCacheOptions options)
             {
-                if (Entries.TryRemove(entry.Key))
-                {
-                    CacheSize -= entry.Size;
+                if (TryRemoveEntry(entry))
                     entry.InvokeEvictionCallbacks();
-                }
+            }
+
+            internal bool TryRemoveEntry(CacheEntry<K, V> entry)
+            {
+                if (!Entries.TryRemove(entry.Key))
+                    return false;
+
+                CacheSize -= entry.Size;
+                return true;
             }
         }
     }

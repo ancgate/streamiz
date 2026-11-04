@@ -22,6 +22,10 @@ namespace Streamiz.Kafka.Net.State.Cache.Internal
             internal List<PostEvictionCallbackRegistration<K, V>> PostEvictionCallbacks => _postEvictionCallbacks ??= new List<PostEvictionCallbackRegistration<K, V>>();
             
 
+            // the callbacks won't be invoked: the entry is given to the cache's batch eviction callback instead
+            internal bool TakeEvictionCallbacks()
+                => Interlocked.Exchange(ref _postEvictionCallbacks, null) is {Count: > 0};
+
             internal void InvokeEvictionCallbacks(CacheEntry<K, V> cacheEntry)
             {
                 if (_postEvictionCallbacks != null)

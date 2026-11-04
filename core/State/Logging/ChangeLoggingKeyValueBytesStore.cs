@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Streamiz.Kafka.Net.Crosscutting;
+using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.State.Enumerator;
 using Streamiz.Kafka.Net.State.Internal;
 
@@ -47,6 +48,29 @@ namespace Streamiz.Kafka.Net.State.Logging
             foreach (var e in entries)
             {
                 Publish(e.Key, e.Value);
+            }
+        }
+
+        /// <summary>
+        /// Write the entries to the wrapped store in one batch, then log each entry with its own record context
+        /// (used by the cache, whose entries come from different records).
+        /// </summary>
+        internal void PutAll(IReadOnlyList<KeyValuePair<Bytes, byte[]>> entries, IReadOnlyList<IRecordContext> recordContexts)
+        {
+            wrapped.PutAll(entries);
+
+            var currentContext = context.RecordContext;
+            try
+            {
+                for (int i = 0; i < entries.Count; ++i)
+                {
+                    context.SetRecordMetaData(recordContexts[i]);
+                    Publish(entries[i].Key, entries[i].Value);
+                }
+            }
+            finally
+            {
+                context.SetRecordMetaData(currentContext);
             }
         }
 
