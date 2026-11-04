@@ -545,3 +545,62 @@ How the data is stored :
 - `Delete` reads the old value and then deletes the row (it's not atomic, the task is the only writer of its rows).
 - `ApproximateNumEntries` returns 0: Bigtable has no cheap row count.
 - When `CreateTableIfNotExists` is true, the table is created with the column family (garbage collection: 1 version) if it doesn't exist. Otherwise, create the table and the column family before starting the application.
+
+### AWS DynamoDB Key/Value store
+
+**This feature is available in `EARLY ACCESS` only.**
+
+The `AWS DynamoDB` remote store keeps a key/value state store in [Amazon DynamoDB](https://aws.amazon.com/dynamodb/). As with the Azure store, the changelog topic is disabled: DynamoDB keeps the data.
+
+#### How to ?
+
+1- Install this nuget package
+
+```
+dotnet add package Streamiz.Kafka.Net.Aws.RemoteStorage
+```
+
+2- Use the helper class to materialize the `AWS Remote Store`
+
+``` csharp
+var table = builder.Table("table-input", AwsRemoteStorage.As<string, string>("my-store"));
+```
+
+3- Configure it, in code or via the configuration (the values set in code win)
+
+``` csharp
+var table = builder
+                .Table("table-input",
+                    AwsRemoteStorage.As<string, string>(
+                            new AwsRemoteStorageOptions
+                                {
+                                    Region = "eu-west-1",
+                                    TableNamePrefix = "my-app-"
+                                },
+                            "my-store"));
+```
+
+``` csharp
+config["aws.remote.storage.region"] = "eu-west-1";
+config["aws.remote.storage.table.prefix"] = "my-app-";
+// optional: DynamoDB local or LocalStack endpoint
+config["aws.remote.storage.service.url"] = "http://localhost:4566";
+// optional: explicit credentials (otherwise the default AWS credentials chain is used: environment, profile, instance role, ...)
+config["aws.remote.storage.access.key"] = "ACCESS_KEY";
+config["aws.remote.storage.secret.key"] = "SECRET_KEY";
+config["aws.remote.storage.session.token"] = "SESSION_TOKEN";
+// optional: don't create the table if it doesn't exist (a bool, default true)
+config["aws.remote.storage.create.table"] = false;
+```
+
+#### Behaviour
+
+- Each store is a DynamoDB table named `<prefix><store name>`. Characters which are not allowed in a table name are replaced by `_`.
+- Partition key `TaskId` (string): the task id, so each task only reads and writes its own items. Sort key `Key` (binary): the key bytes, with a `0x00` byte in front because a key attribute can't be empty. DynamoDB orders binary sort keys by unsigned bytes, so `Range` and `All` return the keys in the same order as the other stores. Attribute `Value` (binary).
+- By default, the table is created with on-demand capacity (`PAY_PER_REQUEST`) if it doesn't exist, and the store waits until it is active. Set `CreateTableIfNotExists = false` to manage the table yourself, with the same key schema.
+- Permissions: `dynamodb:GetItem`, `PutItem`, `DeleteItem`, `BatchWriteItem` and `Query` on the table, plus `DescribeTable` and `CreateTable` when the table is created by Streamiz.
+- Reads are strongly consistent. Putting a `null` value deletes the item, and `Delete` returns the previous value.
+- `PutAll` writes batches of 25 items (a DynamoDB limit) and retries the items DynamoDB didn't process.
+- `Range`, `ReverseRange`, `All` and `ReverseAll` are `Query` calls on the task's partition, page by page.
+- `ApproximateNumEntries` counts the task's items with a `COUNT` query: it is exact, but it reads all the items of the task.
+- A DynamoDB item is at most 400 KB, so a key and a value must fit in it.

@@ -41,6 +41,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.Azure.Re
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.Gcp.RemoteStorage", "remote\Streamiz.Kafka.Net.Gcp.RemoteStorage\Streamiz.Kafka.Net.Gcp.RemoteStorage.csproj", "{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.Aws.RemoteStorage", "remote\Streamiz.Kafka.Net.Aws.RemoteStorage\Streamiz.Kafka.Net.Aws.RemoteStorage.csproj", "{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -219,6 +221,18 @@ Global
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}.Release|x64.Build.0 = Release|Any CPU
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}.Release|x86.ActiveCfg = Release|Any CPU
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}.Release|x86.Build.0 = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x64.Build.0 = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x86.Build.0 = Debug|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x64.ActiveCfg = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x64.Build.0 = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x86.ActiveCfg = Release|Any CPU
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -238,6 +252,7 @@ Global
 		{BF5D9176-D098-46DE-BF12-07D24928EBCA} = {3C748A6C-9316-4507-8FEE-77C684C4F028}
 		{F137CE5F-28ED-493F-9D12-E1FFBA5C0943} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
+		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {66BAF5BD-970F-480F-92B9-761323FFAA58}
