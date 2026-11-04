@@ -5,6 +5,10 @@ using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.Processors.Internal;
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using Streamiz.Kafka.Net.Metrics;
+using Streamiz.Kafka.Net.Metrics.Internal;
+using Streamiz.Kafka.Net.State.Internal;
 
 
 namespace Streamiz.Kafka.Net.Tests.Private
@@ -36,6 +40,16 @@ namespace Streamiz.Kafka.Net.Tests.Private
             public void Init(ProcessorContext context, IStateStore root)
             {
             }
+        }
+
+        private class MeteredTestStateStore : TestStateStore, IRestoreSensorStore
+        {
+            public MeteredTestStateStore(string name, Sensor restoreSensor) : base(name)
+            {
+                RestoreSensor = restoreSensor;
+            }
+
+            public Sensor RestoreSensor { get; }
         }
 
         [Test]
@@ -182,6 +196,23 @@ namespace Streamiz.Kafka.Net.Tests.Private
             Assert.AreEqual(1, batchCalls);
             Assert.AreEqual(0, perRecordCallsOnBatchStore);
             Assert.AreEqual(2, perRecordCalls);
+        }
+
+        [Test]
+        public void RestoreRecordsTheStoreRestoreSensor()
+        {
+            var registry = new StreamMetricsRegistry(Guid.NewGuid().ToString(), MetricsRecordingLevel.DEBUG);
+            var sensor = StateStoreMetrics.RestoreSensor(new TaskId {Id = 0, Partition = 0}, "test", "store", registry);
+            var stateMgt = CreateStateManagerWithChangelogs("store");
+            stateMgt.Register(new MeteredTestStateStore("store", sensor), _ => { }, _ => Thread.Sleep(20));
+
+            var metadata = stateMgt.GetStoreMetadata(new TopicPartition("store-cl", 0));
+            stateMgt.Restore(metadata, ChangelogRecords("store-cl", ("k1", "v1"), ("k2", "v2")));
+
+            var maxLatency = sensor.Metrics[MetricName.NameAndGroup(
+                StateStoreMetrics.RESTORE + StreamMetricsRegistry.LATENCY_SUFFIX + StreamMetricsRegistry.MAX_SUFFIX,
+                StreamMetricsRegistry.STATE_STORE_LEVEL_GROUP)];
+            Assert.GreaterOrEqual((double) maxLatency.Value, 15);
         }
     }
 }

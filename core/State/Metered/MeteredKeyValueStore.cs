@@ -18,7 +18,8 @@ namespace Streamiz.Kafka.Net.State.Metered
 {
     internal class MeteredKeyValueStore<K, V> :
         WrappedKeyValueStore<K, V>,
-        IKeyValueStore<K, V>
+        IKeyValueStore<K, V>,
+        IRestoreSensorStore
     {
         private readonly string metricScope;
         private Sensor putSensor = NoRunnableSensor.Empty;
@@ -40,8 +41,12 @@ namespace Streamiz.Kafka.Net.State.Metered
             this.metricScope = metricScope;
         }
 
+        public Sensor RestoreSensor { get; private set; }
+
         public override void Init(ProcessorContext context, IStateStore root)
         {
+            // before the inner stores are initialized: global stores are restored during their initialization
+            RestoreSensor = StateStoreMetrics.RestoreSensor(context.Id, metricScope, Name, context.Metrics);
             base.Init(context, root);
             
             RegisterMetrics();

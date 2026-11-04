@@ -291,13 +291,16 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 long endOffset = listRecords[listRecords.Count - 1].Offset.Value;
                 var convertedRecords = listRecords.Select(r => storeMetadata.RecordConverter(r)).ToList();
 
-                if (storeMetadata.BatchRestoreCallback != null)
-                    storeMetadata.BatchRestoreCallback(convertedRecords);
-                else
+                storeMetadata.Store.MeasureRestore(() =>
                 {
-                    foreach (var _record in convertedRecords)
-                        storeMetadata.RestoreCallback(_record);
-                }
+                    if (storeMetadata.BatchRestoreCallback != null)
+                        storeMetadata.BatchRestoreCallback(convertedRecords);
+                    else
+                    {
+                        foreach (var _record in convertedRecords)
+                            storeMetadata.RestoreCallback(_record);
+                    }
+                });
 
                 storeMetadata.Offset = endOffset;
             }

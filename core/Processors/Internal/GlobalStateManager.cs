@@ -198,7 +198,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                         topicPartitions,
                         highWatermarks,
                         r => r,
-                        store.Name);
+                        store);
                 }
                 else
                 {
@@ -208,7 +208,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                         topicPartitions,
                         highWatermarks,
                         StateManagerTools.ConverterForStore(store),
-                        store.Name);
+                        store);
                 }
             }
             finally
@@ -282,8 +282,9 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             List<TopicPartition> topicPartitions,
             IDictionary<TopicPartition, (Offset, Offset)> offsetWatermarks,
             Func<ConsumeResult<byte[], byte[]>, ConsumeResult<byte[], byte[]>> recordConverter,
-            string storeName)
+            IStateStore store)
         {
+            var storeName = store.Name;
             foreach (var topicPartition in topicPartitions)
             {
                 var offsets = GetRestoreOffsets(topicPartition, offsetWatermarks);
@@ -313,22 +314,21 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     long batchRestoreCount = 0;
                     var convertedRecords = records.Select(r => recordConverter(r)).ToList();
 
-                    if (batchRestoreCallback != null)
+                    if (convertedRecords.Count > 0)
                     {
-                        if (convertedRecords.Count > 0)
-                            batchRestoreCallback(convertedRecords);
-                        restoreCount += convertedRecords.Count;
-                        batchRestoreCount += convertedRecords.Count;
-                    }
-                    else
-                    {
-                        foreach (var record in convertedRecords)
+                        store.MeasureRestore(() =>
                         {
-                            restoreCallback?.Invoke(record);
-                            restoreCount++;
-                            batchRestoreCount++;
-                        }
+                            if (batchRestoreCallback != null)
+                                batchRestoreCallback(convertedRecords);
+                            else
+                            {
+                                foreach (var record in convertedRecords)
+                                    restoreCallback?.Invoke(record);
+                            }
+                        });
                     }
+                    restoreCount += convertedRecords.Count;
+                    batchRestoreCount += convertedRecords.Count;
 
                     if (convertedRecords.Any())
                         offset = records.Last().Offset;

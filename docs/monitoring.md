@@ -299,6 +299,16 @@ All the following metrics have a recording level of `DEBUG`. The `store-scope` v
 | <span style="color: #06389C; font-weight: bold;">put-avg</span>       | The average latency of calls to remove        | thread_id,task_id,[STORE-TYPE]_id  |
 | <span style="color: #06389C; font-weight: bold;">put-max</span>       | The maximum latency of calls to remove        | thread_id,task_id,[STORE-TYPE]_id  |
 
+**Sensor : internal.[THREAD_ID].task.[TASK_ID].store.[STORE_NAME].sensor.restore, Type : stream-state-metrics**
+
+Recorded for each batch of changelog records restored into the store.
+
+| Metric name      | Description | Tags          |
+| :---             |    :----:   |          ---: |
+| <span style="color: #06389C; font-weight: bold;">restore-rate</span>        | The average number of restorations per second        | thread_id,task_id,[STORE-TYPE]_id  |
+| <span style="color: #06389C; font-weight: bold;">restore-latency-avg</span>       | The average latency of restorations        | thread_id,task_id,[STORE-TYPE]_id  |
+| <span style="color: #06389C; font-weight: bold;">restore-latency-max</span>       | The maximum latency of restorations        | thread_id,task_id,[STORE-TYPE]_id  |
+
 ### RocksDb metrics
 
 *Not available for now, stay tuned works in progress*
