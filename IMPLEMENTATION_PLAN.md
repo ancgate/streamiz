@@ -51,8 +51,8 @@ Each feature lists what exists today, how it would be built, the files it touche
 | 3. Windowing (done) | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins (done) | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
 | 5. Time-aware state (done) | Versioned key-value store, then KIP-923 stream-table join grace | KIP-923 depends on the versioned store |
-| 6. Performance | Batch cache eviction | Needs benchmarks; touches the hot path |
-| 7. Async V2 | ParallelConsumer-style async processing | Largest redesign; best done once DLQ exists |
+| 6. Performance (done) | Batch cache eviction | Needs benchmarks; touches the hot path |
+| 7. Async V2 (done, opt-in) | ParallelConsumer-style async processing | Largest redesign; best done once DLQ exists |
 | 8. Remote storage | AWS (DynamoDB), GCP (Bigtable) + Azure fixes | Independent packages, can run in parallel with anything |
 | 9. Cluster features | Interactive Queries metadata, then standby replicas | Need a new metadata mechanism (no custom assignor) |
 | 10. Needs scoping | KEDA autoscaling, broadcast, network shuffle, cross-cluster, "Extensions" | Roadmap entries are one line each; design must be agreed first |
@@ -274,54 +274,60 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 ---
 
-## Phase 6: Batch cache eviction (M)
+## Phase 6: Batch cache eviction (done)
 
-**Today:** `MemoryCache` compaction calls one eviction callback per entry. `CachingKeyValueStore` and `CachingWindowStore` each do one `wrapped.Put` and one forward per entry.
-
-**Plan:**
-- During `Compact` / over-capacity compaction, collect the evicted dirty entries in eviction order.
-- Call a new batch callback once per compaction pass.
-- `CachingKeyValueStore` writes values with `wrapped.PutAll(...)` and tombstones with `Delete`, then forwards in the original order.
-- `CachingWindowStore` groups by segment.
-- The single-entry path stays for removals that aren't compaction.
-
-**Tests:** extend `CacheKeyValueStoreTests`, `MemoryCacheTests` and the caching window store tests to check ordering, tombstones and flush listener output. Check throughput with a benchmark in `PerformanceTests` before and after.
+- **Batching:** the key-value cache gives each compaction pass to the caching store in one batch, oldest first.
+  - The store reads all old values first, writes all dirty entries with one `PutAll`, then forwards each entry in its original order, with the same old and new values as before.
+  - Each changelog record keeps its own entry's timestamp.
+  - Window and session caches keep the per-entry path, because their stores have no batch write.
+- **Bug fixed:** an update to a key that was already cached was lost when the cache was over capacity.
+  - The new value was dropped, but its size was still counted.
+  - The next flush then wrote neither value.
+  - A test covers it.
+- **Performance:** the gain was small, about 0–15% on a cached RocksDB table. Most of the time goes to the cache's own bookkeeping, which sorts entries by last access on every flush. That would be the next thing to optimize.
+- **Still open:** errors in eviction callbacks are only logged, with a null logger, as before.
 
 ---
 
-## Phase 7: External async processing V2 (XL)
+## Phase 7: External async processing V2 (done, opt-in)
 
-**Today (V1):**
-- Each `MapAsync` / `FlatMapAsync` / `ForeachAsync` adds two internal topics (`-request` and `-response`).
-- One `ExternalStreamThread` per instance runs every call one at a time with `task.Wait()` and `Thread.Sleep` retries.
-- The external thread has no rebalance handling, no EOS, and no state.
+**How to enable:** set `StreamConfig.AsyncProcessingMode = AsyncProcessingMode.V2`. The default is still V1.
+- The public API is unchanged.
+- New setting: `RetryPolicyBuilder.MaxConcurrency(n)`, default 16.
 
-**V2 design (similar to ParallelConsumer):**
-- **No more request/response topics.** The async processor runs inside the normal stream task.
-- **Concurrency per task, ordered by key.**
-  - Each async processor keeps a bounded pool of in-flight `Task`s (`MaxConcurrency`, default 16).
-  - Records with the same key run in order (per-key queue). Different keys run in parallel.
-  - When the in-flight limit is reached, the partition is paused (`consumer.Pause`) and later resumed.
-- **Results go back on the stream thread.**
-  - Completed calls go into a completion queue.
-  - The stream thread drains the queue each loop iteration and forwards downstream in offset order per key, so downstream processors and stores stay single-threaded.
-- **Offset tracking.** Commit only up to the highest contiguous completed offset per partition, so no record is lost on a crash.
-- **Retries and timeouts** use `async` backoff (`Task.Delay`) with a `CancellationToken` timeout. When retries run out, the record goes to the DLQ (Phase 2) or fails, depending on `RetryPolicy`.
-- **Rebalance.** On revoke, cancel or drain in-flight work for the revoked partitions before committing.
-- **EOS.** Outputs are produced from the stream thread inside the current transaction and offsets are contiguous, so EOS can be supported.
-- **Rollout.**
-  - Keep the public API (`MapAsync` etc.).
-  - Select the engine with `StreamConfig.AsyncProcessingMode = V1 | V2`, defaulting to V1 for one release, then switch the default.
-  - Remove V1 and the `ExternalStreamTask` stubs in the next major version.
+**What changes in V2:**
+- The request topic and the external thread are gone. The async processor runs inside the stream task.
+- Records for the same key run in order; records for different keys run concurrently, up to `MaxConcurrency`.
+- Results are forwarded on the stream thread with their original timestamp and headers.
 
-**Tests:**
-- The existing `KStream*AsyncTests` must pass under both modes.
-- New tests:
-  - per-key ordering when completions arrive out of order;
-  - backpressure and pause;
-  - revoke while calls are in flight;
-  - commit offsets with gaps.
-- An integration test with a slow fake external service, checking throughput scales with `MaxConcurrency`.
+**Offsets:** a partition commits up to its smallest in-flight record, so a crash can't lose a record.
+
+**Back-pressure:** a saturated processor stops the task from processing, and the task's partitions are paused until the processor is half empty.
+
+**Retries and errors:**
+- Retries use non-blocking backoff, and a timeout bounds the total time per record.
+- `SKIP` drops the record and sends it to the dead letter queue if one is configured.
+- `FAIL` goes through the `ProcessingExceptionHandler`.
+- `BUFFERED` retries until the call succeeds.
+
+**Revoke and close:**
+- A revoked or closed task waits for its calls, up to max.poll.interval/2, before committing.
+- Lost partitions cancel the calls.
+
+**Exactly-once:** results are produced inside the transaction. This isn't tested yet.
+
+**Results:**
+- The existing async tests pass in both modes.
+- 15 new V2 tests.
+- 100 calls of 50 ms each took 366 ms at concurrency 16.
+
+**Deviations:** MapAsync and FlatMapAsync still write their results to the response topic. The mode is only known once the topology is rewritten, and the resulting stream's repartitioning and joins already depend on that topic.
+
+**Next steps:**
+- Remove the response topic, which needs the mode to be known when the DSL graph is built.
+- Add metrics, such as an in-flight gauge.
+- Add an exactly-once test.
+- Make V2 the default, then remove V1 in the next major version.
 
 ---
 

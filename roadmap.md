@@ -1,10 +1,10 @@
 # Roadmap Feature
 
 - [x] Dead letter queue mecanism
-- [ ] Reafactor External Call with similar behavior like ParrallelConsumer + a real async approach
+- [x] Reafactor External Call with similar behavior like ParrallelConsumer + a real async approach
 - [ ] Auto scaling consumption (inspired KEDA)
 - [x] State store restore handler with a batch approach
-- [ ] Evict cache store as a batch of records instead of unitary records
+- [x] Evict cache store as a batch of records instead of unitary records
 - [x] KIP-613 : end-to-end latency metrics
 - [x] KIP-450 : Sliding windows
 - [x] Session Windows
