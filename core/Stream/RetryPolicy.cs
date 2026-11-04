@@ -15,6 +15,7 @@ namespace Streamiz.Kafka.Net.Stream
         private static readonly List<Type> DEFAULT_RETRIABLE_EXCEPTIONS = new();
         private static long DEFAULT_MEMORY_BUFFER_SIZE = 100;
         private static long DEFAULT_TIMEOUT_MS = -1; // MaxPollIntervalMs / 3
+        private static int DEFAULT_MAX_CONCURRENCY = 16;
 
         private long retryBackOffMs = DEFAULT_RETRY_BACKOFF_MS;
         private int numberOfRetry = DEFAULT_NUMBER_OF_RETRY;
@@ -22,6 +23,7 @@ namespace Streamiz.Kafka.Net.Stream
         private readonly List<Type> retriableExceptions = DEFAULT_RETRIABLE_EXCEPTIONS.ToList();
         private long memoryBufferSize = DEFAULT_MEMORY_BUFFER_SIZE;
         private long timeoutMs = DEFAULT_TIMEOUT_MS;
+        private int maxConcurrency = DEFAULT_MAX_CONCURRENCY;
 
         internal RetryPolicyBuilder()
         {
@@ -108,6 +110,19 @@ namespace Streamiz.Kafka.Net.Stream
         /// Build the retry policy
         /// </summary>
         /// <returns></returns>
+        /// <summary>
+        /// Only used with <see cref="AsyncProcessingMode.V2"/> : maximum number of records accepted by the async processor
+        /// of one task and not completed yet (running or waiting behind a record with the same key). When it is reached,
+        /// the task stops processing new records until some calls complete. Default : 16.
+        /// </summary>
+        public RetryPolicyBuilder MaxConcurrency(int maxConcurrency)
+        {
+            if (maxConcurrency <= 0)
+                throw new ArgumentException("Max concurrency must be greater than 0");
+            this.maxConcurrency = maxConcurrency;
+            return this;
+        }
+        
         public RetryPolicy Build()
         {
             return new RetryPolicy(
@@ -116,7 +131,8 @@ namespace Streamiz.Kafka.Net.Stream
                 endRetryBehavior,
                 retriableExceptions,
                 memoryBufferSize,
-                timeoutMs);
+                timeoutMs,
+                maxConcurrency);
         }
     }
 
@@ -174,13 +190,21 @@ namespace Streamiz.Kafka.Net.Stream
         /// </summary>
         public long MemoryBufferSize { get; }
 
+        /// <summary>
+        /// Only used with <see cref="AsyncProcessingMode.V2"/> : maximum number of records accepted by the async processor
+        /// of one task and not completed yet.
+        /// </summary>
+        public int MaxConcurrency { get; } = 16;
+
         internal RetryPolicy(long retryBackOffMs,
             int numberOfRetry,
             EndRetryBehavior endRetryBehavior,
             List<Type> retriableExceptions,
             long memoryBufferSize,
-            long timeoutMs)
+            long timeoutMs,
+            int maxConcurrency = 16)
         {
+            MaxConcurrency = maxConcurrency;
             RetryBackOffMs = retryBackOffMs;
             NumberOfRetry = numberOfRetry;
             EndRetryBehavior = endRetryBehavior;

@@ -31,6 +31,10 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         private readonly IList<string> requestTopics = new List<string>();
         private readonly ISet<string> globalTopics = new HashSet<string>();
         private readonly IDictionary<string, int?> internalTopics = new Dictionary<string, int?>();
+        // async processors (MapAsync, ...): request sink, request source, async processor and request topic,
+        // the request part is removed when the async processing mode is V2 (see RewriteTopology)
+        private readonly IList<(string RequestSink, string RequestSource, string AsyncProcessor, string RequestTopic)> asyncRequests =
+            new List<(string, string, string, string)>();
         // internal topic -> source nodes whose topics it must be co-partitioned with
         private readonly IDictionary<string, ISet<string>> internalTopicsCopartitionedWith = new Dictionary<string, ISet<string>>();
 
@@ -523,8 +527,43 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             }
         }
 
+        /// <summary>
+        /// Register the request part of an async processor: request sink -> request topic -> request source -> async processor.
+        /// </summary>
+        internal void RegisterAsyncRequest(string requestSink, string requestSource, string asyncProcessor, string requestTopic)
+            => asyncRequests.Add((requestSink, requestSource, asyncProcessor, requestTopic));
+
+        // AsyncProcessingMode.V2 : the async processors run inside the stream tasks, so the request topics, the request sinks
+        // and sources are removed and each async processor is connected to the parents of its request sink.
+        // The response topic (if any) is kept : the streams built from the async processors (partitioning, co-partitioning)
+        // are the same in both modes.
+        private void RewriteAsyncProcessorsInTask()
+        {
+            foreach (var asyncRequest in asyncRequests)
+            {
+                if (!nodeFactories.TryGetValue(asyncRequest.RequestSink, out var requestSink) ||
+                    !nodeFactories.TryGetValue(asyncRequest.AsyncProcessor, out var asyncProcessor))
+                    continue;
+
+                var parents = requestSink.Previous;
+                asyncProcessor.Previous = parents;
+                nodeFactories.Remove(asyncRequest.RequestSink);
+                nodeFactories.Remove(asyncRequest.RequestSource);
+                requestTopics.Remove(asyncRequest.RequestTopic);
+                internalTopics.Remove(asyncRequest.RequestTopic);
+                nodeGrouper.Unite(asyncRequest.AsyncProcessor, parents);
+            }
+
+            asyncRequests.Clear();
+            ExternalCall = requestTopics.Any();
+            nodeGroups = null;
+        }
+
         internal void RewriteTopology(IStreamConfig config)
         {
+            if (config.AsyncProcessingMode == AsyncProcessingMode.V2)
+                RewriteAsyncProcessorsInTask();
+
             foreach (var storeBuilder in globalStateBuilders.Values)
             {
                 GlobalStateStores.Add(storeBuilder.Name, storeBuilder.Build(config));

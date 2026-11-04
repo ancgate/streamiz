@@ -18,6 +18,22 @@ using Streamiz.Kafka.Net.Table;
 namespace Streamiz.Kafka.Net
 {
     /// <summary>
+    /// Engine of the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+    /// </summary>
+    public enum AsyncProcessingMode
+    {
+        /// <summary>
+        /// Records go through an internal request topic and are processed one by one by a dedicated external stream thread.
+        /// </summary>
+        V1,
+        /// <summary>
+        /// Records are processed inside the stream task, without the request topic and the external thread:
+        /// concurrently for different keys, in order for a same key.
+        /// </summary>
+        V2
+    }
+
+    /// <summary>
     /// Processing Guarantee enumeration used in <see cref="IStreamConfig.Guarantee"/>
     /// </summary>
     public enum ProcessingGuarantee
@@ -214,6 +230,14 @@ namespace Streamiz.Kafka.Net
         /// The topic is not created by Streamiz. Default : null (no dead letter queue).
         /// </summary>
         string DeadLetterQueueTopicName { get; set; }
+
+        /// <summary>
+        /// Engine used by the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+        /// <see cref="Net.AsyncProcessingMode.V1"/> (default) : records go through an internal request topic and are processed one by one by a dedicated external thread.
+        /// <see cref="Net.AsyncProcessingMode.V2"/> : records are processed inside the stream task, concurrently across keys and in order for a same key,
+        /// up to <see cref="Stream.RetryPolicy.MaxConcurrency"/> calls per processor and task. See the async processing documentation.
+        /// </summary>
+        AsyncProcessingMode AsyncProcessingMode { get; set; }
 
         /// <summary>
         /// Maximum allowed time between calls to consume messages (e.g., rd_kafka_consumer_poll())
@@ -543,6 +567,7 @@ namespace Streamiz.Kafka.Net
         private const string productionExceptionHandlerCst = "production.exception.handler";
         private const string processingExceptionHandlerCst = "processing.exception.handler";
         private const string deadLetterQueueTopicNameCst = "errors.deadletterqueue.topic.name";
+        private const string asyncProcessingModeCst = "async.processing.mode";
         private const string logProcessingSummaryCst = "log.processing.summary";
         private const string stateStoreCacheMaxBytesCst = "statestore.cache.max.bytes";
         private const string queryWatermarkOffsetsTimeoutMsCst = "query.watermark.offsets.timeout.ms";
@@ -2500,6 +2525,7 @@ namespace Streamiz.Kafka.Net
             DeserializationExceptionHandler = (_, _, _) => ExceptionHandlerResponse.FAIL;
             ProcessingExceptionHandler = (_, _) => ExceptionHandlerResponse.FAIL;
             DeadLetterQueueTopicName = null;
+            AsyncProcessingMode = AsyncProcessingMode.V1;
             RocksDbConfigHandler = (_, _) => { };
             StateDir = Path.Combine(Path.GetTempPath(), "streamiz-kafka-net");
             ReplicationFactor = -1;
@@ -2969,6 +2995,19 @@ namespace Streamiz.Kafka.Net
         {
             get => configProperties[deadLetterQueueTopicNameCst];
             set => configProperties.AddOrUpdate(deadLetterQueueTopicNameCst, value);
+        }
+
+        /// <summary>
+        /// Engine used by the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+        /// <see cref="Net.AsyncProcessingMode.V1"/> (default) : records go through an internal request topic and are processed one by one by a dedicated external thread.
+        /// <see cref="Net.AsyncProcessingMode.V2"/> : records are processed inside the stream task, concurrently across keys and in order for a same key,
+        /// up to <see cref="Stream.RetryPolicy.MaxConcurrency"/> calls per processor and task. See the async processing documentation.
+        /// </summary>
+        [StreamConfigProperty("" + asyncProcessingModeCst)]
+        public AsyncProcessingMode AsyncProcessingMode
+        {
+            get => configProperties[asyncProcessingModeCst];
+            set => configProperties.AddOrUpdate(asyncProcessingModeCst, value);
         }
 
         /// <summary>

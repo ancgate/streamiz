@@ -135,11 +135,149 @@ namespace Streamiz.Kafka.Net.Processors
 
         private IEnumerable<TopicPartitionOffset> GetPartitionsWithOffset()
         {
-            foreach (var kp in consumedOffsets)
+            foreach (var kp in CommittableConsumedOffsets())
             {
-                yield return new TopicPartitionOffset(kp.Key, kp.Value + 1);
+                yield return new TopicPartitionOffset(kp.Key, kp.Value);
             }
         }
+
+        // next offset to commit for each partition : after the last processed record, but never past a source record
+        // whose async call (AsyncProcessingMode.V2) is not completed
+        private IDictionary<TopicPartition, long> CommittableConsumedOffsets()
+        {
+            var offsets = consumedOffsets.ToDictionary(kv => kv.Key, kv => kv.Value + 1);
+            if (asyncCoordinator != null)
+            {
+                foreach (var kv in asyncCoordinator.LowestInFlightOffsets())
+                {
+                    if (!offsets.TryGetValue(kv.Key, out var offset) || kv.Value < offset)
+                        offsets[kv.Key] = kv.Value;
+                }
+            }
+
+            return offsets;
+        }
+
+        #region Async processing (AsyncProcessingMode.V2)
+
+        private AsyncProcessingCoordinator asyncCoordinator;
+
+        /// <summary>
+        /// Coordinator of the async processors running inside this task
+        /// </summary>
+        internal AsyncProcessingCoordinator AsyncCoordinator => asyncCoordinator ??= new AsyncProcessingCoordinator();
+
+        /// <summary>
+        /// Source record being processed, null outside of <see cref="Process"/>
+        /// </summary>
+        internal ConsumeResult<byte[], byte[]> CurrentSourceRecord { get; private set; }
+
+        /// <summary>
+        /// True if an async processor reached its max concurrency (back-pressure)
+        /// </summary>
+        internal bool AsyncSaturated => asyncCoordinator is {IsSaturated: true};
+
+        /// <summary>
+        /// True if the async processors are at most half full
+        /// </summary>
+        internal bool AsyncCanResume => asyncCoordinator == null || asyncCoordinator.CanResume;
+
+        /// <summary>
+        /// True if async calls are not completed, or completed and not handled yet
+        /// </summary>
+        internal bool HasAsyncWork => asyncCoordinator != null &&
+                                      (asyncCoordinator.Pending > 0 || asyncCoordinator.HasCompletions);
+
+        /// <summary>
+        /// Handle the completed async calls on the stream thread : forward their results downstream (with the
+        /// record context of their source record) or raise their errors through the processing exception handler.
+        /// </summary>
+        /// <param name="raiseErrors">false while closing : the errors are logged, and their source records stay uncommitted</param>
+        /// <returns>number of completions handled</returns>
+        internal int DrainAsyncCompletions(bool raiseErrors = true)
+        {
+            if (asyncCoordinator == null)
+                return 0;
+
+            int drained = 0;
+            while (asyncCoordinator.TryDequeue(out var completion))
+            {
+                ++drained;
+                var currentRecordContext = Context.RecordContext;
+                try
+                {
+                    completion.Complete();
+                }
+                catch (Exception e) when (e is not TaskMigratedException)
+                {
+                    if (!raiseErrors)
+                    {
+                        // the source record is not untracked : the task won't commit past it
+                        log.LogError(e,
+                            "{LogPrefix}Async processing failed while closing the task, the record will be processed again",
+                            logPrefix);
+                        continue;
+                    }
+
+                    if (completion.SourceRecord == null ||
+                        !ContinueAfterProcessingException(completion.SourceRecord, e))
+                    {
+                        asyncCoordinator.UntrackSourceRecord(completion.SourceRecord);
+                        FailedRecordInfo.Attach(e, completion.SourceRecord);
+                        throw;
+                    }
+                }
+                finally
+                {
+                    Context.SetRecordMetaData(currentRecordContext);
+                }
+
+                asyncCoordinator.UntrackSourceRecord(completion.SourceRecord);
+                commitNeeded = true;
+            }
+
+            return drained;
+        }
+
+        /// <summary>
+        /// Wait for the async calls in progress (bounded by <paramref name="timeout"/>) and handle their completions,
+        /// before committing the task when it's revoked or closed.
+        /// </summary>
+        internal void CompleteAsyncProcessing(TimeSpan timeout, bool raiseErrors = false)
+        {
+            if (asyncCoordinator == null)
+                return;
+
+            var deadline = DateTime.Now + timeout;
+            DrainAsyncCompletions(raiseErrors);
+            while (asyncCoordinator.Pending > 0 && DateTime.Now < deadline)
+            {
+                var remaining = deadline - DateTime.Now;
+                asyncCoordinator.WaitForCompletion(remaining < TimeSpan.FromMilliseconds(100)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(100));
+                DrainAsyncCompletions(raiseErrors);
+            }
+
+            if (asyncCoordinator.Pending > 0)
+                log.LogWarning(
+                    "{LogPrefix}{Pending} async calls are not completed after {Timeout}, their records will be processed again",
+                    logPrefix, asyncCoordinator.Pending, timeout);
+        }
+
+        /// <summary>
+        /// Wait for the async calls in progress, at most half of max.poll.interval.ms, before committing the task
+        /// when it's revoked or closed.
+        /// </summary>
+        internal void CompleteAsyncProcessing()
+            => CompleteAsyncProcessing(TimeSpan.FromMilliseconds((configuration.MaxPollIntervalMs ?? 300000) / 2));
+
+        /// <summary>
+        /// Dirty close : cancel the async calls in progress and ignore their results
+        /// </summary>
+        internal void CancelAsyncProcessing() => asyncCoordinator?.Cancel();
+
+        #endregion
 
         private TaskScheduled ScheduleTask(long startTime, TimeSpan interval, PunctuationType punctuationType, Action<long> punctuator)
         {
@@ -171,9 +309,9 @@ namespace Streamiz.Kafka.Net.Processors
             get
             {
                 var purgeableConsumedOffsets = new Dictionary<TopicPartition, long>();
-                foreach(var kv in consumedOffsets)
+                foreach(var kv in CommittableConsumedOffsets())
                     if (Topology.RepartitionTopics.Contains(kv.Key.Topic))
-                        purgeableConsumedOffsets.AddOrUpdate(kv.Key, kv.Value + 1);
+                        purgeableConsumedOffsets.AddOrUpdate(kv.Key, kv.Value);
                 return purgeableConsumedOffsets;
             }
         }
@@ -183,6 +321,10 @@ namespace Streamiz.Kafka.Net.Processors
         public override bool CanProcess(long now)
         {
             if (state == TaskState.CLOSED || state == TaskState.RESTORING || state == TaskState.CREATED)
+                return false;
+
+            // back-pressure : an async processor reached its max concurrency, the records stay in the record queues
+            if (asyncCoordinator is {IsSaturated: true})
                 return false;
 
             if (partitionGrouper.AllPartitionsBuffered)
@@ -228,6 +370,7 @@ namespace Streamiz.Kafka.Net.Processors
 
             if (state == TaskState.SUSPENDED)
             {
+                CancelAsyncProcessing();
                 partitionGrouper.Close();
                 
                 foreach (var kp in processors)
@@ -374,6 +517,8 @@ namespace Streamiz.Kafka.Net.Processors
             }
             else if (state == TaskState.RUNNING)
             {
+                // the async calls still in progress (if any) are dropped, their records are not committed
+                CancelAsyncProcessing();
                 foreach (var kp in processors)
                     kp.Close();
                 partitionGrouper.Clear();
@@ -443,6 +588,7 @@ namespace Streamiz.Kafka.Net.Processors
 
             log.LogDebug($"{logPrefix}Start processing one record [{recordInfo}]");
             long latency = 0;
+            CurrentSourceRecord = record.Record;
             try
             {
                 latency = ActionHelper.MeasureLatency(() => record.Processor.Process(record.Record));
@@ -454,6 +600,10 @@ namespace Streamiz.Kafka.Net.Processors
                     FailedRecordInfo.Attach(e, record.Record);
                     throw;
                 }
+            }
+            finally
+            {
+                CurrentSourceRecord = null;
             }
             log.LogDebug($"{logPrefix}Completed processing one record [{recordInfo}]");
 

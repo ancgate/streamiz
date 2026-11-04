@@ -240,6 +240,9 @@ namespace Streamiz.Kafka.Net.Processors
                                 IEnumerable<ConsumeResult<byte[], byte[]>> records =
                                     new List<ConsumeResult<byte[], byte[]>>();
 
+                                // back-pressure of the async processors (AsyncProcessingMode.V2)
+                                Manager.PauseOrResumeAsyncSaturatedTasks();
+
                                 long pollLatency = ActionHelper.MeasureLatency(() =>
                                 {
                                     records = PollRequest(GetTimeout());
@@ -417,13 +420,20 @@ namespace Streamiz.Kafka.Net.Processors
             }
         }
 
+        private static readonly TimeSpan AsyncWorkPollTimeout = TimeSpan.FromMilliseconds(5);
+
         private TimeSpan GetTimeout()
         {
             if (State == ThreadState.PARTITIONS_ASSIGNED || State == ThreadState.PARTITIONS_REVOKED ||
                 State == ThreadState.PENDING_SHUTDOWN)
                 return TimeSpan.Zero;
             if (State == ThreadState.RUNNING || State == ThreadState.STARTING)
+            {
+                // async calls in progress (AsyncProcessingMode.V2) : poll shortly to forward their results quickly
+                if (Manager.HasAsyncWork && consumeTimeout > AsyncWorkPollTimeout)
+                    return AsyncWorkPollTimeout;
                 return consumeTimeout;
+            }
 
             log.LogError("{LogPrefix}Unexpected state {State} during normal iteration", logPrefix, State);
             throw new StreamsException($"Unexpected state {State} during normal iteration");

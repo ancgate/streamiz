@@ -44,6 +44,44 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         public StreamsProducer Producer { get; }
         public IEnumerable<TaskId> ActiveTaskIds => activeTasks.Keys;
         public bool RebalanceInProgress { get; internal set; }
+
+        /// <summary>
+        /// True if a task has async calls in progress or results to handle (AsyncProcessingMode.V2)
+        /// </summary>
+        internal bool HasAsyncWork => activeTasks.Values.Any(t => t.HasAsyncWork);
+
+        // tasks whose partitions are paused because an async processor is saturated (AsyncProcessingMode.V2)
+        private readonly HashSet<TaskId> asyncPausedTasks = new();
+
+        /// <summary>
+        /// Back-pressure of the async processors (AsyncProcessingMode.V2) : pause the partitions of a task when one of its
+        /// async processors reached its max concurrency, so the records are not buffered in memory without limit, and resume
+        /// them when the async processors are at most half full.
+        /// </summary>
+        internal void PauseOrResumeAsyncSaturatedTasks()
+        {
+            asyncPausedTasks.RemoveWhere(id => !activeTasks.ContainsKey(id));
+            if (Consumer == null)
+                return;
+
+            foreach (var task in activeTasks.Values)
+            {
+                if (asyncPausedTasks.Contains(task.Id))
+                {
+                    if (task.AsyncCanResume)
+                    {
+                        Consumer.Resume(task.Partition);
+                        asyncPausedTasks.Remove(task.Id);
+                    }
+                }
+                else if (task.AsyncSaturated)
+                {
+                    log.LogDebug("Pause the partitions of the task {TaskId} : an async processor reached its max concurrency", task.Id);
+                    Consumer.Pause(task.Partition);
+                    asyncPausedTasks.Add(task.Id);
+                }
+            }
+        }
         internal readonly object _lock = new object();
 
         internal TaskManager(InternalTopologyBuilder builder, TaskCreator taskCreator, IAdminClient adminClient,
@@ -121,7 +159,11 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             }
 
             foreach (var rvTask in revokedTask)
+            {
+                // the async calls in progress complete before the commit (AsyncProcessingMode.V2)
+                rvTask.CompleteAsyncProcessing();
                 consumedOffsetsToCommit.AddRange(rvTask.PrepareCommit());
+            }
 
             if (consumedOffsetsToCommit.Any())
             {
@@ -165,6 +207,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             foreach (var t in activeTasks)
             {
                 CurrentTask = t.Value;
+                // the async calls in progress complete before the commit (AsyncProcessingMode.V2)
+                t.Value.CompleteAsyncProcessing();
                 consumedOffsets.AddRange(t.Value.PrepareCommit());
             }
 
@@ -304,6 +348,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     try
                     {
                         CurrentTask = task;
+                        // results of the async calls (AsyncProcessingMode.V2) completed since the last iteration
+                        processed += task.DrainAsyncCompletions();
                         if (task.CanProcess(now) && task.Process())
                         {
                             processed++;
@@ -359,6 +405,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         {
             log.LogDebug("Closing lost active tasks as zombies");
             CurrentTask = null;
+            asyncPausedTasks.Clear();
 
             if (Producer.EosEnabled)
                 Producer.AbortTransaction();
@@ -367,6 +414,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             while (enumerator.MoveNext())
             {
                 var task = enumerator.Current.Value;
+                // the results of the async calls in progress are ignored, their records will be processed again
+                task.CancelAsyncProcessing();
                 task.PrepareCommit();
                 task.Suspend();
                 task.PostCommit(true);
