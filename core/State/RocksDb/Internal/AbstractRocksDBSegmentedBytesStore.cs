@@ -3,6 +3,7 @@ using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.State.Enumerator;
 using Streamiz.Kafka.Net.State.Internal;
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Streamiz.Kafka.Net.Metrics;
@@ -96,9 +97,53 @@ namespace Streamiz.Kafka.Net.State.Internal
                 context.Metrics);
             
             segments.OpenExisting(context, observedStreamTime);
-            context.Register(root, (k, v, t) => Put(k, v));
+            context.Register(root, (k, v, t) => Put(k, v), RestoreBatch);
 
             isOpen = true;
+        }
+
+        // Same result as calling Put for each record, but consecutive records of the same segment are
+        // written in one batch. The pending batch is written before another segment is looked up, because
+        // that lookup can drop segments which are no longer live.
+        internal void RestoreBatch(IReadOnlyList<(Bytes Key, byte[] Value, long Timestamp)> records)
+        {
+            S currentSegment = default;
+            long currentSegmentId = -1;
+            var pending = new List<KeyValuePair<Bytes, byte[]>>();
+
+            void WritePending()
+            {
+                if (pending.Count > 0)
+                    currentSegment.PutAll(pending);
+                pending = new List<KeyValuePair<Bytes, byte[]>>();
+                currentSegment = default;
+            }
+
+            foreach (var record in records)
+            {
+                long ts = keySchema.SegmentTimestamp(record.Key);
+                observedStreamTime = Math.Max(ts, observedStreamTime);
+                long segId = segments.SegmentId(ts);
+
+                if (currentSegment != null && segId != currentSegmentId)
+                    WritePending();
+
+                var segment = segments.GetOrCreateSegmentIfLive(segId, context, observedStreamTime);
+                if (segment == null)
+                {
+                    expiredRecordSensor.Record(1.0, context.Timestamp);
+                    logger.LogWarning("Skipping record for expired segment");
+                }
+                else
+                {
+                    currentSegment = segment;
+                    currentSegmentId = segId;
+                    pending.Add(new KeyValuePair<Bytes, byte[]>(record.Key, record.Value));
+                }
+            }
+
+            if (currentSegment != null)
+                WritePending();
         }
 
         public void Put(Bytes key, byte[] value)

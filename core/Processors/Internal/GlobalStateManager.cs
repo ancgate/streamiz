@@ -168,6 +168,10 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         }
 
         public void Register(IStateStore store, Action<ConsumeResult<byte[], byte[]>> callback)
+            => Register(store, callback, null);
+
+        public void Register(IStateStore store, Action<ConsumeResult<byte[], byte[]>> callback,
+            Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> batchCallback)
         {
             log.LogInformation($"Restoring state for global store {store.Name}");
             var topicPartitions = TopicPartitionsForStore(store).ToList();
@@ -190,6 +194,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                             if (record.Message.Key != null)
                                 processor.Process(record);
                         },
+                        null,
                         topicPartitions,
                         highWatermarks,
                         r => r,
@@ -199,6 +204,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 {
                     RestoreState(
                         callback,
+                        batchCallback,
                         topicPartitions,
                         highWatermarks,
                         StateManagerTools.ConverterForStore(store),
@@ -272,6 +278,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
         private void RestoreState(
             Action<ConsumeResult<byte[], byte[]>> restoreCallback,
+            Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> batchRestoreCallback,
             List<TopicPartition> topicPartitions,
             IDictionary<TopicPartition, (Offset, Offset)> offsetWatermarks,
             Func<ConsumeResult<byte[], byte[]>, ConsumeResult<byte[], byte[]>> recordConverter,
@@ -306,11 +313,21 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     long batchRestoreCount = 0;
                     var convertedRecords = records.Select(r => recordConverter(r)).ToList();
 
-                    foreach (var record in convertedRecords)
+                    if (batchRestoreCallback != null)
                     {
-                        restoreCallback?.Invoke(record);
-                        restoreCount++;
-                        batchRestoreCount++;
+                        if (convertedRecords.Count > 0)
+                            batchRestoreCallback(convertedRecords);
+                        restoreCount += convertedRecords.Count;
+                        batchRestoreCount += convertedRecords.Count;
+                    }
+                    else
+                    {
+                        foreach (var record in convertedRecords)
+                        {
+                            restoreCallback?.Invoke(record);
+                            restoreCount++;
+                            batchRestoreCount++;
+                        }
                     }
 
                     if (convertedRecords.Any())

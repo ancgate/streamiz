@@ -89,6 +89,33 @@ namespace Streamiz.Kafka.Net.Tests.Stores
         }
 
         [Test]
+        public void RestoreBatchAppliesPutsAndDeletesInOrder()
+        {
+            var serdes = new StringSerDes();
+            Bytes K(string k) => Bytes.Wrap(serdes.Serialize(k, new SerializationContext()));
+            byte[] V(string v) => serdes.Serialize(v, new SerializationContext());
+
+            store.Put(K("k4"), V("old"));
+            store.RestoreBatch(new List<(Bytes, byte[], long)>
+            {
+                (K("k1"), V("v1"), 1),
+                (K("k2"), V("v2"), 2),
+                (K("k1"), null, 3),
+                (K("k2"), V("v3"), 4),
+                (K("k3"), V("v1"), 5),
+                (K("k3"), null, 6),
+                (K("k1"), V("v4"), 7),
+                (K("k4"), null, 8),
+            });
+
+            Assert.AreEqual("v4", serdes.Deserialize(store.Get(K("k1")), new SerializationContext()));
+            Assert.AreEqual("v3", serdes.Deserialize(store.Get(K("k2")), new SerializationContext()));
+            Assert.IsNull(store.Get(K("k3")));
+            Assert.IsNull(store.Get(K("k4")));
+            Assert.AreEqual(2, store.All().ToList().Count);
+        }
+
+        [Test]
         public void PutKeyExist()
         {
             var serdes = new StringSerDes();

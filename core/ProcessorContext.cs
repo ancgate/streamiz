@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Confluent.Kafka;
 using Streamiz.Kafka.Net.Crosscutting;
 using Streamiz.Kafka.Net.Kafka;
@@ -154,6 +155,36 @@ namespace Streamiz.Kafka.Net
             };
             
             States.Register(store, restoreCallBack);
+        }
+
+        /// <summary>
+        /// Register a store with a batch restore callback: each polled batch of changelog records is given to the
+        /// store in one call. <paramref name="callback"/> is kept for state managers that restore record by record.
+        /// </summary>
+        internal void Register(IStateStore store, StateRestoreCallback callback, BatchingStateRestoreCallback batchCallback)
+        {
+            Action<ConsumeResult<byte[], byte[]>> restoreCallBack = (result) =>
+            {
+                SetRecordMetaData(result);
+                callback(Bytes.Wrap(result.Message.Key), result.Message.Value,
+                    result.Message.Timestamp.UnixTimestampMs);
+            };
+
+            Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> batchRestoreCallBack = (results) =>
+            {
+                if (results.Count == 0)
+                    return;
+
+                // same record metadata as after a record-by-record restoration
+                SetRecordMetaData(results[results.Count - 1]);
+                var records = new List<(Bytes, byte[], long)>(results.Count);
+                foreach (var result in results)
+                    records.Add((Bytes.Wrap(result.Message.Key), result.Message.Value,
+                        result.Message.Timestamp.UnixTimestampMs));
+                batchCallback(records);
+            };
+
+            States.Register(store, restoreCallBack, batchRestoreCallBack);
         }
 
         internal void Log(string storeName, Bytes key, byte[] value, long timestamp)
