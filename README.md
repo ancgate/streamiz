@@ -104,7 +104,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | Punctuate                                                    |              X                     |         X              |                                            |
 | KStream-KStream Join                                         |              X                     |         X              |                                            |
 | KTable-KTable Join                                           |              X                     |         X              |                                            |
-| KTable-KTable FK Join                                        |              X                     |                        | Plan for 1.8.0                             |
+| KTable-KTable FK Join                                        |              X                     |                        | Planned                                    |
 | KStream-KTable Join                                          |              X                     |         X              |                                            |
 | KStream-GlobalKTable Join                                    |              X                     |         X              |                                            |
 | External Async Processing                                    |                                    |         X              | V2 in coming                               |
@@ -115,7 +115,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | Cache                                                        |              X                     |         X              |                                            |
 | Suppress(..)                                                 |              X                     |         X              |                                            |
 | Interactive Queries                                          |              X                     |                        | No plan for now                            |
-| State store batch restoring                                  |              X                     |                        | Plan for 1.8.0                             |
+| State store batch restoring                                  |              X                     |         X              |                                            |
 | Exactly Once                                                 |              X                     |         X              |                                            |
 | Remote storage (Azure, GCP, Aws)                             |                                    |         X              | Azure Preview, GCP and AWS coming          |
 

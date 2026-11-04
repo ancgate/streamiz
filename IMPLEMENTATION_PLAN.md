@@ -46,7 +46,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 
 | Phase | Features | Why this order |
 |---|---|---|
-| 1. Quick wins | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
+| 1. Quick wins (done) | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
 | 2. Error handling | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
 | 3. Windowing | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
@@ -61,73 +61,60 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 
 ---
 
-## Phase 1: Quick wins
+## Phase 1: Quick wins (done)
 
-### 1.1 Rename `WithRecordTimestamp` to `AlterRecordTimestamp` (S)
+### 1.1 Rename `WithRecordTimestamp` to `AlterRecordTimestamp` (done)
 
-**Today:** `IKStream.WithRecordTimestamp` (`core/Stream/IKStream.cs`, around line 2297) and `KStream.cs` (around line 1174).
+- `IKStream.AlterRecordTimestamp` added.
+- `WithRecordTimestamp` is kept as an `[Obsolete]` alias that forwards to it. Remove it in the next major version.
+- Tests: `KStreamAlterRecordTimestampTests`, including one test for the obsolete alias.
 
-**Plan:**
-- Add `AlterRecordTimestamp` with the same signature.
-- Keep `WithRecordTimestamp` as `[Obsolete("Use AlterRecordTimestamp")]`, forwarding to the new method so existing users don't break.
-- Remove it in the next major version.
+### 1.2 KIP-613: end-to-end latency metrics (done)
 
-**Tests:** copy `KStreamWithRecordTimestampTests` for the new name, and keep one test that covers the obsolete alias.
+- New processor-node metric `record-e2e-latency-avg/min/max`, at INFO level.
+- It is recorded at source nodes and at terminal nodes (nodes with no children). The value is the task wall clock minus the record timestamp.
+- As in Kafka, a terminal node records just before its parent forwards the record to it.
+- Documented in `docs/monitoring.md`; test in `ProcessorNodeMetricsTests`.
 
-### 1.2 KIP-613: end-to-end latency metrics (S, done)
+### 1.3 KIP-424: suppress until a wall-clock time limit (done)
 
-**Today:** task-level and node-level process sensors exist. There is no e2e sensor. `SensorHelper.AddAvgAndMinAndMaxToSensor` and the `Min` stat already exist.
+**API:** `SuppressedBuilder.UntilWallClockTimeLimit<K,V>(TimeSpan, IBufferConfig)`.
 
-**Plan:**
-- Add `ProcessorNodeMetrics.RecordE2ELatencySensor(threadId, taskId, processorNodeId)`. It records `record-e2e-latency-avg/min/max` at INFO level, in the processor-node group.
-- Record `wallClock - Context.Timestamp`:
-  - in `SourceProcessor.Process`;
-  - in `SinkProcessor.Process`, which has no sensors today. Initialise them in `Init`.
-- Use the task's wall-clock provider, so `TopologyTestDriver` can control time.
-- Document the new metric in `docs/monitoring.md`.
+**How it works:**
+- The buffer stores the wall-clock time at which each key was first buffered. Later updates keep that original timer.
+- Instead of a periodic punctuator, one processing-time punctuation is scheduled for when the oldest buffered record is due. It is rescheduled after each eviction, and nothing runs while the buffer is empty.
+  - Why: a periodic punctuator made `TopologyTestDriver.AdvanceWallClockTime` step through time in small increments, which emitted records too early in tests.
+- After a restart, a one-shot punctuation emits records restored from the changelog.
 
-**Tests:** extend `test/.../Metrics/ProcessorNodeMetricsTests.cs`. Pipe records with a known timestamp, advance the mocked wall clock, and assert avg/min/max.
+**Scheduler fixes needed for this:**
+- A punctuator can now register or cancel punctuations safely while punctuations are running.
+- Cancelled punctuations no longer run once more.
+- The "punctuated" count only includes punctuations that actually ran.
 
-### 1.3 KIP-424: suppress until a wall-clock time limit (S/M)
+**Docs and tests:** documented in `docs/stateful-processors.md`; 8 new tests in `KTableSuppressTests`.
 
-**Today:** `KTableSuppressProcessor` evicts only on stream time, inside `Process`. Wall-clock punctuation already exists (`PunctuationType.PROCESSING_TIME`).
+**Not covered:** no automated test for emitting restored records after a restart, because the sync test driver can't simulate a restore.
 
-**Plan:**
-- Add `SuppressedBuilder.UntilWallClockTimeLimit(TimeSpan, IBufferConfig)`, with a new `TimeDefinition` that uses wall-clock time.
-- In `KTableSuppressProcessor.Init`, for this mode, schedule a `PROCESSING_TIME` punctuator. Its interval is `min(limit, commit interval)`.
-- The punctuator evicts buffered records whose wall-clock insertion time plus the limit is ≤ now.
-- The buffer stores the wall-clock time as the sort time for this mode, so `InMemoryTimeOrderedKeyValueChangeBuffer` can be reused unchanged.
-- Buffer-full strategies (`EmitEarlyWhenFull` / `ShutDown`) behave as they do today.
+### 1.4 Batch state store restoration (done)
 
-**Tests:** add cases to `KTableSuppressTests` that use `driver.AdvanceWallClockTime`.
-
-### 1.4 Batch state store restoration (M)
-
-**Today:** `StoreChangelogReader` polls changelog records in batches. But `ProcessorStateManager.Restore` (line 288, `// TODO : bach restoration behavior`) calls the restore callback one record at a time, and every store's `Init` registers a single-record `Put`.
-
-**Plan:**
-- Add a batching callback next to `StateRestoreCallback`: `BatchingStateRestoreCallback(IEnumerable<(Bytes key, byte[] value, long timestamp)>)`.
-- Allow `ProcessorContext.Register` / `IStateManager.Register` to take either kind of callback. `StateStoreMetadata` keeps whichever was registered.
-- `ProcessorStateManager.Restore` groups the polled records per store:
-  - stores with a batching callback get one call per poll batch;
-  - other stores keep the per-record path.
+- New internal batch restore callback. `ProcessorStateManager` and `GlobalStateManager` pass each polled batch to a store in one call.
+  - Records keep changelog order, with tombstones included.
+  - Stores without the callback keep the per-record path.
+  - The public `ProcessorContext.Register` is unchanged.
 - Store changes:
-  - **`RocksDbKeyValueStore`:** restore through one `WriteBatch`, reusing `PutAll` (tombstones become deletes in the batch).
-  - **`AbstractRocksDBSegmentedBytesStore`:** group by segment, with one `WriteBatch` per segment.
-  - **In-memory stores:** use `PutAll`.
-- Apply the same change to `GlobalStateManager`.
-- Record `StateStoreMetrics.RestoreSensor`.
+  - `RocksDbKeyValueStore`: one RocksDB `WriteBatch` per batch.
+  - RocksDB segmented (window) store: one write per run of records in the same segment, with exactly the same expired-segment behaviour as record-by-record restore.
+  - `InMemoryKeyValueStore`: loops over `Put`.
+- **Left as follow-ups:**
+  - `InMemoryWindowStore` and the suppress buffer still restore record by record.
+  - `StateStoreMetrics.RestoreSensor` is still not recorded: the state manager doesn't have the store's metrics scope.
+  - **Test mock bug:** `SyncConsumer.Position` returns one more than the real position. With the sync mock, a restore can finish one record early when exactly one record is left after a batch. Real consumers are not affected. Fix: return `OffsetConsumed`.
 
-**Tests:**
-- Extend `ProcessorStateManagerTests` and `StoreChangelogReaderTests` to cover batch calls, mixed tombstones, and fallback for stores without a batching callback.
-- Extend `StreamThreadRestoreRocksDbTests` to check end-to-end equality.
-- Add a perf check in `IntegrationTests/PerformanceTests.cs`.
+### 1.5 README / docs corrections (done)
 
-### 1.5 README / docs corrections (S)
-
-- Fix the "Plan for 1.8.0" rows.
-- Tick each feature as it lands.
-- Optionally add `<SuppressTfmSupportBuildWarnings>` for `net5.0`, or drop `net5.0` (EOL) in a major version.
+- The README table now marks batch restoring as supported, and the FK join note no longer says "Plan for 1.8.0".
+- `roadmap.md` items are ticked as they land.
+- Still optional: silence or drop the `net5.0` end-of-life warnings in a major version.
 
 ---
 
