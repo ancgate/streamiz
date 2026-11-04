@@ -46,7 +46,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 
 | Phase | Features | Why this order |
 |---|---|---|
-| 1. Quick wins | `AlterRecordTimestamp` rename, KIP-612 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
+| 1. Quick wins | `AlterRecordTimestamp` rename, KIP-613 e2e latency, KIP-424 wall-clock suppress, batch restore, README fixes | Self-contained, low risk, and they warm up the codebase |
 | 2. Error handling | Processing exception handler + dead letter queue, at-most-once (bug 3 already fixed) | Users ask for these often; small blast radius |
 | 3. Windowing | Sliding windows, then session windows | Session windows build on the store work; sliding is simpler |
 | 4. Joins | KTable-KTable FK join | Large but follows a well-known Kafka design (KIP-213) |
@@ -74,7 +74,7 @@ Each feature should ship as its own PR, with unit tests through `TopologyTestDri
 
 **Tests:** copy `KStreamWithRecordTimestampTests` for the new name, and keep one test that covers the obsolete alias.
 
-### 1.2 KIP-612: end-to-end latency metrics (S)
+### 1.2 KIP-613: end-to-end latency metrics (S, done)
 
 **Today:** task-level and node-level process sensors exist. There is no e2e sensor. `SensorHelper.AddAvgAndMinAndMaxToSensor` and the `Min` stat already exist.
 
