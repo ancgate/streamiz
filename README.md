@@ -10,6 +10,7 @@
 | Streamiz.Kafka.Net.Metrics.Prometheus   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Metrics.Prometheus)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Metrics.Prometheus) |
 | Streamiz.Kafka.Net.Metrics.OpenTelemetry   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Metrics.OpenTelemetry)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Metrics.OpenTelemetry) |
 | Streamiz.Kafka.Net.Azure.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Azure.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Azure.RemoteStorage) |
+| Streamiz.Kafka.Net.Gcp.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Gcp.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Gcp.RemoteStorage) |
 
 ## Quality Statistics
 

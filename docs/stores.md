@@ -490,3 +490,50 @@ config["azure.remote.storage.account.key"] = "MASTER_KEY";
 /// ....
 var table = builder.Table("table-input", AzureRemoteStorage.As<string, string>());
 ```
+
+
+### GCP Bigtable Key/Value store
+
+**This feature is available in `EARLY ACCESS` only.**
+
+The `GCP Bigtable Store` keeps a key/value store in a [Cloud Bigtable](https://cloud.google.com/bigtable) table instead of a local store and its changelog topic.
+
+#### How to ?
+
+1- Install this nuget package
+
+```
+dotnet add package Streamiz.Kafka.Net.Gcp.RemoteStorage
+```
+
+2- Use the helper class to materialize the `GCP Bigtable Store`
+
+``` csharp
+var table = builder.Table("table-input", GcpRemoteStorage.As<string, string>());
+```
+
+3- Configure it, programmatically with `GcpRemoteStorageOptions` (`GcpRemoteStorage.As<string, string>(new GcpRemoteStorageOptions { ProjectId = "...", InstanceId = "..." })`) or via the configuration :
+
+``` csharp
+config["gcp.remote.storage.project.id"] = "my-project";
+config["gcp.remote.storage.instance.id"] = "my-instance";
+```
+
+| Option | Configuration key | Default |
+| --- | --- | --- |
+| `ProjectId` | `gcp.remote.storage.project.id` | required |
+| `InstanceId` | `gcp.remote.storage.instance.id` | required |
+| `TableId` | `gcp.remote.storage.table.id` | `streamiz-state` |
+| `ColumnFamily` | `gcp.remote.storage.column.family` | `v` |
+| `AppProfileId` | `gcp.remote.storage.app.profile.id` | the instance's default app profile |
+| `EmulatorHost` | `gcp.remote.storage.emulator.host` | the `BIGTABLE_EMULATOR_HOST` environment variable, if it's set |
+| `CredentialsPath` | `gcp.remote.storage.credentials.path` | Application Default Credentials |
+| `CreateTableIfNotExists` | `gcp.remote.storage.create.table` | `true` (needs the Bigtable admin permissions) |
+| `BatchSize` | `gcp.remote.storage.batch.size` | `500` rows per `MutateRows` request in `PutAll` |
+
+How the data is stored :
+- All the stores share one table by default: each row key starts with the application id, the store name and the task id (each prefixed by its length), followed by the key bytes. So the rows of a task are contiguous and sorted like the keys of the local stores, and ranges are Bigtable range scans (reverse ranges use reversed scans).
+- Each row holds the value in one cell (column `value` of the column family). Writing a value replaces the previous cell, and a null value deletes the row.
+- `Delete` reads the old value and then deletes the row (it's not atomic, the task is the only writer of its rows).
+- `ApproximateNumEntries` returns 0: Bigtable has no cheap row count.
+- When `CreateTableIfNotExists` is true, the table is created with the column family (garbage collection: 1 version) if it doesn't exist. Otherwise, create the table and the column family before starting the application.
