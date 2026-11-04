@@ -226,6 +226,11 @@ namespace Streamiz.Kafka.Net.Processors
                     // will be refused but we do not throw exception here
                     return;
                 }
+                else if (oldState == GlobalThreadState.PENDING_SHUTDOWN && newState == GlobalThreadState.RUNNING)
+                {
+                    // the thread was closed before it started running: it doesn't run, its consumer is closed
+                    return;
+                }
                 else if (oldState == GlobalThreadState.DEAD)
                 {
                     // when the state is already in NOT_RUNNING, all its transitions
