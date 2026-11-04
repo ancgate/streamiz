@@ -506,6 +506,47 @@ Detailed behavior:
 - For each input record on one side that does not have any match on the other side, the ValueJoiner will be called with (leftRecord.value, null) or (null, rightRecord.value), respectively; this explains the rows with timestamp=3 and timestamp=7 in the table below, which list [A, null] and [null, b], respectively, in the OUTER JOIN column.
 
 
+## IKTable-IKTable Foreign-Key Join
+
+- (IKTable, IKTable) → IKTable
+
+Joins each record of this table with the record of another table whose key is extracted from the value of this record (a foreign key), like Kafka Streams (KIP-213). It's a many-to-one join: many records of this table can refer to the same record of the other table, and an update of the other table updates the results of all the records which refer to it. The result table has the keys of this table.
+
+The tables don't need to be co-partitioned: the join sends subscriptions to the other table through an internal topic keyed by the foreign key (`<application.id>-<name>-subscription-registration-topic`, co-partitioned with the other table), and the other table sends back responses through an internal topic keyed by the primary key (`<application.id>-<name>-subscription-response-topic`, co-partitioned with this table). The subscriptions are kept in a state store (`<name>-subscription-store`). Without a name, the processors, topics and store get generated names (`KTABLE-FK-JOIN-...`).
+
+### Inner Join
+
+``` csharp
+// orders: orderId -> Order (with a ProductId), products: productId -> Product
+var orders = builder.Table<string, Order>("orders");
+var products = builder.Table<string, Product>("products");
+
+var enriched = orders.Join(
+    products,
+    order => order.ProductId,                      // foreign key extractor
+    (order, product) => new EnrichedOrder(order, product),
+    InMemory.As<string, EnrichedOrder>("enriched-orders"), // optional
+    "orders-products");                            // optional name
+```
+
+### Left Join
+
+``` csharp
+var enriched = orders.LeftJoin(
+    products,
+    order => order.ProductId,
+    (order, product) => new EnrichedOrder(order, product)); // product is null if there is no match
+```
+
+Detailed behavior:
+- A record of this table with a foreign key produces a result once the other table has a record with this key (inner join), or straight away with a null foreign value (left join). The left join also produces a result, with a null foreign value, when the foreign key is null; the inner join skips it.
+- When the foreign key of a record changes, its old subscription is removed and the result is computed with the new foreign key. If there is no record for the new foreign key, the inner join deletes the result (tombstone) and the left join calls the joiner with a null foreign value.
+- When a record of this table is deleted, its result is deleted.
+- When a record of the other table is updated, the results of all the records which refer to it are recomputed. When it is deleted, the inner join deletes these results and the left join calls the joiner with a null foreign value.
+- Each response carries a hash of the value of this table which sent the subscription: if the value changed in the meantime, the response is stale and is dropped, so results are not computed with an old value.
+- The serdes of the keys and values of both tables are used to serialize the foreign key, the primary key, the hashed value and the foreign value in the internal topics and store: set them explicitly if the default serdes of the configuration don't match.
+
+
 ## Drop Duplicates
 
 This function removes duplicate records from the same key based on the time interval mentioned. Duplicate records are detected based on the kafka key plus the lambda returns; In this simplified example, the record value is the event ID.  The internal processor remembers the old event IDs in an associated window state store, which automatically purges/expires event IDs from the store after a certain amount of time has passed to prevent the store from growing indefinitely.

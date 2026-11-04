@@ -155,13 +155,39 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 return partitionCount;
             }
 
+            // the topic must have the same number of partitions as the given topics (e.g. foreign-key join subscriptions)
+            int? CopartitionedPartitionCount(InternalTopicConfig config)
+            {
+                if (config is not RepartitionTopicConfig { CopartitionedWithTopics: { Count: > 0 } } repartitionConfig)
+                    return null;
+
+                int? partitionCount = null;
+                foreach (var topic in repartitionConfig.CopartitionedWithTopics)
+                {
+                    int? count = null;
+                    if (repartitionTopics.TryGetValue(topic, out var internalTopic) && internalTopic.NumberPartitions > 0)
+                        count = internalTopic.NumberPartitions;
+                    else
+                    {
+                        var clusterMetadata = topicManager.AdminClient.GetMetadata(topic, TimeSpan.FromSeconds(10));
+                        count = clusterMetadata.PartitionCountForTopic(topic) ?? ComputePartitionCount(topic);
+                    }
+
+                    if (count.HasValue && (partitionCount == null || count > partitionCount))
+                        partitionCount = count;
+                }
+
+                return partitionCount;
+            }
+
             #endregion
 
             foreach (var repartitionTopic in repartitionTopics)
             {
                 if (repartitionTopic.Value.NumberPartitions == 0)
                 {
-                    var numberPartition = ComputePartitionCount(repartitionTopic.Key);
+                    var numberPartition = CopartitionedPartitionCount(repartitionTopic.Value) ??
+                                          ComputePartitionCount(repartitionTopic.Key);
                     if (!numberPartition.HasValue)
                     {
                         log.LogWarning(

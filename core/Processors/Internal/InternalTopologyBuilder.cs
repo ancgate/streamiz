@@ -31,6 +31,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         private readonly IList<string> requestTopics = new List<string>();
         private readonly ISet<string> globalTopics = new HashSet<string>();
         private readonly IDictionary<string, int?> internalTopics = new Dictionary<string, int?>();
+        // internal topic -> source nodes whose topics it must be co-partitioned with
+        private readonly IDictionary<string, ISet<string>> internalTopicsCopartitionedWith = new Dictionary<string, ISet<string>>();
 
         private readonly QuickUnion<string> nodeGrouper = new QuickUnion<string>();
         private IDictionary<int, ISet<string>> nodeGroups = new Dictionary<int, ISet<string>>();
@@ -246,6 +248,29 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         {
             if(!internalTopics.ContainsKey(repartitionTopic)) 
                 internalTopics.Add(repartitionTopic, numberPartitions);
+        }
+
+        /// <summary>
+        /// Add an internal topic which must have the same number of partitions as the topics of <paramref name="copartitionedWithSourceNodes"/>.
+        /// </summary>
+        internal void AddInternalTopic(string repartitionTopic, int? numberPartitions, IEnumerable<string> copartitionedWithSourceNodes)
+        {
+            AddInternalTopic(repartitionTopic, numberPartitions);
+            if (copartitionedWithSourceNodes != null)
+                internalTopicsCopartitionedWith[repartitionTopic] = new HashSet<string>(copartitionedWithSourceNodes);
+        }
+
+        private IList<string> CopartitionedWithTopics(string internalTopic)
+        {
+            if (!internalTopicsCopartitionedWith.TryGetValue(internalTopic, out var sourceNodes))
+                return new List<string>();
+
+            return sourceNodes
+                .Select(n => nodeFactories.TryGetValue(n, out var factory) ? factory as ISourceNodeFactory : null)
+                .Where(f => f?.Topic != null)
+                .Select(f => internalTopics.ContainsKey(f.Topic) ? DecorateTopic(f.Topic) : f.Topic)
+                .Distinct()
+                .ToList();
         }
         
         private void ValidateTopicNotAlreadyRegistered(string topicName)
@@ -608,7 +633,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                                 {Name = internalTopic, NumberPartitions = internalTopicPartition.Value});
                     else
                         repartitionTopics.AddIfNotExist(internalTopic,
-                            new RepartitionTopicConfig() {Name = internalTopic});
+                            new RepartitionTopicConfig()
+                                {Name = internalTopic, CopartitionedWithTopics = CopartitionedWithTopics(topic)});
                     return internalTopic;
                 }
 

@@ -12,6 +12,7 @@ using Streamiz.Kafka.Net.Table.Internal.Graph.Nodes;
 using System;
 using System.Collections.Generic;
 using Streamiz.Kafka.Net.State.Suppress;
+using Streamiz.Kafka.Net.Table.Internal.ForeignKeyJoin;
 
 namespace Streamiz.Kafka.Net.Table.Internal
 {
@@ -239,6 +240,34 @@ namespace Streamiz.Kafka.Net.Table.Internal
 
         #endregion
         
+        #region Foreign key join
+
+        public IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner)
+            => Join(foreignKeyTable, foreignKeyExtractor, valueJoiner, null);
+
+        public IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null)
+            => Join(foreignKeyTable, foreignKeyExtractor, new WrappedValueJoiner<V, VO, VR>(valueJoiner), materialized, named);
+
+        public IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner)
+            => Join(foreignKeyTable, foreignKeyExtractor, valueJoiner, null);
+
+        public IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null)
+            => ForeignKeyJoinBuilder.Join(builder, this, foreignKeyTable, foreignKeyExtractor, valueJoiner, false, materialized, named);
+
+        public IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner)
+            => LeftJoin(foreignKeyTable, foreignKeyExtractor, valueJoiner, null);
+
+        public IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null)
+            => LeftJoin(foreignKeyTable, foreignKeyExtractor, new WrappedValueJoiner<V, VO, VR>(valueJoiner), materialized, named);
+
+        public IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner)
+            => LeftJoin(foreignKeyTable, foreignKeyExtractor, valueJoiner, null);
+
+        public IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null)
+            => ForeignKeyJoinBuilder.Join(builder, this, foreignKeyTable, foreignKeyExtractor, valueJoiner, true, materialized, named);
+
+        #endregion
+
         #region Suppress
         
         public IKTable<K, V> Suppress(Suppressed<K, V> suppressed, string named = null)
