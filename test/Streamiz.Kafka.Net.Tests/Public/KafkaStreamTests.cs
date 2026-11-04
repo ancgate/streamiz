@@ -478,7 +478,7 @@ namespace Streamiz.Kafka.Net.Tests.Public
                 .Stream<string, string>("test")
                 .GroupByKey()
                 .WindowedBy(SessionWindowOptions.Of(TimeSpan.FromMinutes(1)))
-                .Count(InMemorySessions.As<string, long>("store"));
+                .Count(InMemorySessions.As<string, long?>("store"));
 
             var t = builder.Build();
             var stream = new KafkaStream(t, config, supplier);
@@ -514,10 +514,10 @@ namespace Streamiz.Kafka.Net.Tests.Public
                             Timestamp = new Confluent.Kafka.Timestamp(time.AddSeconds(offset))
                         });
 
-                var store = stream.Store(StoreQueryParameters.FromNameAndType("store", QueryableStoreTypes.SessionStore<string, long>()));
+                var store = stream.Store(StoreQueryParameters.FromNameAndType("store", QueryableStoreTypes.SessionStore<string, long?>()));
                 Assert.IsNotNull(store);
 
-                List<KeyValuePair<Windowed<string>, long>> sessions = new();
+                List<KeyValuePair<Windowed<string>, long?>> sessions = new();
                 var end = DateTime.Now.AddSeconds(5);
                 while (DateTime.Now < end)
                 {

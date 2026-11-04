@@ -25,24 +25,25 @@ namespace Streamiz.Kafka.Net.Stream.Internal
 
         #region Count
 
-        public IKTable<Windowed<K>, long> Count()
+        // the count is nullable: the sessions merged into a new one are forwarded with a null count (a tombstone)
+        public IKTable<Windowed<K>, long?> Count()
             => Count((string)null);
 
-        public IKTable<Windowed<K>, long> Count(string named)
-            => Count(Materialized<K, long, ISessionStore<Bytes, byte[]>>.Create(), named);
+        public IKTable<Windowed<K>, long?> Count(string named)
+            => Count(Materialized<K, long?, ISessionStore<Bytes, byte[]>>.Create(), named);
 
-        public IKTable<Windowed<K>, long> Count(Materialized<K, long, ISessionStore<Bytes, byte[]>> materialized, string named = null)
+        public IKTable<Windowed<K>, long?> Count(Materialized<K, long?, ISessionStore<Bytes, byte[]>> materialized, string named = null)
         {
-            materialized ??= Materialized<K, long, ISessionStore<Bytes, byte[]>>.Create();
+            materialized ??= Materialized<K, long?, ISessionStore<Bytes, byte[]>>.Create();
 
             if (materialized.ValueSerdes == null)
-                materialized.WithValueSerdes(new Int64SerDes());
+                materialized.WithValueSerdes(new NullableInt64SerDes());
 
             return DoAggregate(
                 KGroupedStream.AGGREGATE_NAME,
-                new WrappedInitializer<long>(() => 0L),
-                new WrappedAggregator<K, V, long>((aggKey, value, aggregate) => aggregate + 1),
-                new WrappedMerger<K, long>((aggKey, aggOne, aggTwo) => aggOne + aggTwo),
+                new WrappedInitializer<long?>(() => 0L),
+                new WrappedAggregator<K, V, long?>((aggKey, value, aggregate) => (aggregate ?? 0L) + 1),
+                new WrappedMerger<K, long?>((aggKey, aggOne, aggTwo) => (aggOne ?? 0L) + (aggTwo ?? 0L)),
                 materialized,
                 named);
         }

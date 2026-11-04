@@ -23,23 +23,27 @@ namespace Streamiz.Kafka.Net.Stream
         /// <summary>
         /// Count the number of records in each session of this stream by the grouped key.
         /// </summary>
-        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session</returns>
-        IKTable<Windowed<K>, long> Count();
+        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session,
+        /// and tombstones (null count) for the sessions merged into a new one</returns>
+        IKTable<Windowed<K>, long?> Count();
 
         /// <summary>
         /// Count the number of records in each session of this stream by the grouped key.
         /// </summary>
         /// <param name="named">a name config used to name the processor in the topology</param>
-        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session</returns>
-        IKTable<Windowed<K>, long> Count(string named);
+        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session,
+        /// and tombstones (null count) for the sessions merged into a new one</returns>
+        IKTable<Windowed<K>, long?> Count(string named);
 
         /// <summary>
         /// Count the number of records in each session of this stream by the grouped key.
         /// </summary>
-        /// <param name="materialized">an instance of <see cref="Materialized{K, V, S}"/> used to materialize a session store.</param>
+        /// <param name="materialized">an instance of <see cref="Materialized{K, V, S}"/> used to materialize a session store.
+        /// Its default value serdes is <see cref="NullableInt64SerDes"/>.</param>
         /// <param name="named">a name config used to name the processor in the topology</param>
-        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session</returns>
-        IKTable<Windowed<K>, long> Count(Materialized<K, long, ISessionStore<Bytes, byte[]>> materialized, string named = null);
+        /// <returns>a windowed <see cref="IKTable{K, V}"/> that contains "update" records with the number of records of each session,
+        /// and tombstones (null count) for the sessions merged into a new one</returns>
+        IKTable<Windowed<K>, long?> Count(Materialized<K, long?, ISessionStore<Bytes, byte[]>> materialized, string named = null);
 
         /// <summary>
         /// Aggregate the values of records in each session of this stream by the grouped key.
