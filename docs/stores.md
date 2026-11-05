@@ -670,3 +670,49 @@ config["aws.remote.storage.create.table"] = false;
 - `Range`, `ReverseRange`, `All` and `ReverseAll` are `Query` calls on the task's partition, page by page.
 - `ApproximateNumEntries` counts the task's items with a `COUNT` query: it is exact, but it reads all the items of the task.
 - A DynamoDB item is at most 400 KB, so a key and a value must fit in it.
+
+### MongoDB Key/Value store
+
+**This feature is available in `EARLY ACCESS` only.**
+
+The `MongoDB Store` keeps a key/value store in a [MongoDB](https://www.mongodb.com) collection instead of a local store and its changelog topic.
+
+#### How to ?
+
+1- Install this nuget package (it targets `netstandard2.1`, `net6.0`, `net7.0` and `net8.0`, like the MongoDB .NET driver 3.x : it can't be used from .NET Framework)
+
+```
+dotnet add package Streamiz.Kafka.Net.MongoDb.RemoteStorage
+```
+
+2- Use the helper class to materialize the `MongoDB Store`
+
+``` csharp
+var table = builder.Table("table-input", MongoDbRemoteStorage.As<string, string>());
+```
+
+3- Configure it, programmatically with `MongoDbRemoteStorageOptions` (`MongoDbRemoteStorage.As<string, string>(new MongoDbRemoteStorageOptions { ConnectionString = "mongodb://localhost:27017" })`) or via the configuration :
+
+``` csharp
+config["mongodb.remote.storage.connection.string"] = "mongodb://localhost:27017";
+```
+
+| Option | Configuration key | Default |
+| --- | --- | --- |
+| `ConnectionString` | `mongodb.remote.storage.connection.string` | required |
+| `DatabaseName` | `mongodb.remote.storage.database` | `streamiz` |
+| `CollectionPrefix` | `mongodb.remote.storage.collection.prefix` | no prefix |
+| `CreateIndex` | `mongodb.remote.storage.create.index` | `true` (needs the `createIndex` permission) |
+| `BatchSize` | `mongodb.remote.storage.batch.size` | `1000` documents per bulk write in `PutAll` |
+
+An option set in code wins over the configuration. The read and write concerns come from the connection string (e.g. `mongodb://host/?w=majority&readConcernLevel=majority`) or the server defaults.
+
+How the data is stored :
+- Each store is a collection named prefix + store name (`$` and the null character are replaced by `_`). Use the prefix (e.g. the application id) when several applications have stores with the same name in one database.
+- Each key of a task is one document `{ _id: "<task>|<hex key>", t: "<task>", k: "<hex key>", v: <value bytes> }`. The key is a lowercase hex string because hex strings compare like the bytes they encode (BSON binary values compare by length first), so ranges are sorted like the local stores.
+- The unique index `{ t: 1, k: 1 }` is created with the simple collation when `CreateIndex` is true, and every query uses the simple collation, even if the collection has another default collation. If `CreateIndex` is false, create this index before starting the application.
+- Putting a `null` value deletes the document, and `Delete` returns the previous value (`findOneAndDelete`).
+- `PutAll` sends ordered bulk writes of `BatchSize` documents: a later write of a key in the batch wins, and `null` values delete.
+- `Range`, `ReverseRange`, `All` and `ReverseAll` are `find` queries on the task's documents sorted by key, read lazily with a cursor.
+- `ApproximateNumEntries` counts the task's documents (`countDocuments`): it is exact and uses the index.
+- A MongoDB document is at most 16 MB, so a key and a value must fit in it.

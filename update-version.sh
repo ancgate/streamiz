@@ -16,6 +16,7 @@ files=(
   "remote/Streamiz.Kafka.Net.Gcp.RemoteStorage/Streamiz.Kafka.Net.Gcp.RemoteStorage.csproj"
   "remote/Streamiz.Kafka.Net.Aws.RemoteStorage/Streamiz.Kafka.Net.Aws.RemoteStorage.csproj"
   "remote/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage.csproj"
+  "remote/Streamiz.Kafka.Net.MongoDb.RemoteStorage/Streamiz.Kafka.Net.MongoDb.RemoteStorage.csproj"
   )
 
 for tag in ${tags[@]}; do

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <!-- MongoDB.Driver 3.x only targets netstandard2.1, net6.0 and net472 : no netstandard2.0 build of this package -->
+        <TargetFrameworks>netstandard2.1;net6.0;net7.0;net8.0</TargetFrameworks>
+        <Version>1.8.2</Version>
+        <PackageVersion>1.8.2</PackageVersion>
+        <AssemblyVersion>1.8.2</AssemblyVersion>
+        <FileVersion>1.8.2</FileVersion>
+        <SignAssembly>true</SignAssembly>
+        <AssemblyOriginatorKeyFile>..\..\key.snk</AssemblyOriginatorKeyFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <LangVersion>9.0</LangVersion>
+        <Authors>@LGouellec</Authors>
+        <PackageProjectUrl>https://github.com/LGouellec/streamiz</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/LGouellec/streamiz</RepositoryUrl>
+        <PackageTags>kafka kafka-streams streamiz event-streaming mongodb</PackageTags>
+        <PackageReleaseNotes>https://github.com/LGouellec/streamiz/releases</PackageReleaseNotes>
+        <PackageIconUrl>https://raw.githubusercontent.com/LGouellec/streamiz/master/resources/logo-kafka-stream-net.png</PackageIconUrl>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="..\..\key.snk" Link="key.snk" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\core\Streamiz.Kafka.Net.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="MongoDB.Driver" Version="3.12.0" />
+    </ItemGroup>
+
+</Project>

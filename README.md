@@ -13,6 +13,7 @@
 | Streamiz.Kafka.Net.Gcp.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Gcp.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Gcp.RemoteStorage) |
 | Streamiz.Kafka.Net.Aws.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Aws.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Aws.RemoteStorage) |
 | Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage) |
+| Streamiz.Kafka.Net.MongoDb.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.MongoDb.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.MongoDb.RemoteStorage) |
 
 ## Quality Statistics
 

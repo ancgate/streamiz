@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.Aws.Remo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage", "remote\Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage\Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage.csproj", "{B6790E6C-DC44-4EF7-BB67-84A0545098F1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Streamiz.Kafka.Net.MongoDb.RemoteStorage", "remote\Streamiz.Kafka.Net.MongoDb.RemoteStorage\Streamiz.Kafka.Net.MongoDb.RemoteStorage.csproj", "{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -224,16 +226,27 @@ Global
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}.Release|x86.ActiveCfg = Release|Any CPU
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10}.Release|x86.Build.0 = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|x64.ActiveCfg = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x64.Build.0 = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|x64.Build.0 = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|x86.ActiveCfg = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Debug|x86.Build.0 = Debug|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Debug|x86.Build.0 = Debug|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x64.ActiveCfg = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|x64.ActiveCfg = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x64.Build.0 = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|x64.Build.0 = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x86.ActiveCfg = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|x86.ActiveCfg = Release|Any CPU
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D}.Release|x86.Build.0 = Release|Any CPU
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1}.Debug|Any CPU.Build.0 = Debug|Any CPU
@@ -247,6 +260,7 @@ Global
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1}.Release|x64.Build.0 = Release|Any CPU
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1}.Release|x86.ActiveCfg = Release|Any CPU
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1}.Release|x86.Build.0 = Release|Any CPU
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -268,6 +282,7 @@ Global
 		{6E3B5C8A-9F41-4D2B-8A77-3C1D2E5F9B10} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
 		{A5EB7C31-106B-4AC2-A299-373C2BAB9E2D} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
 		{B6790E6C-DC44-4EF7-BB67-84A0545098F1} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
+		{DC74F10C-EFDE-4D9B-AAF9-B5911799A696} = {B3CD3B0D-3CCF-450F-A733-A90C41F90E98}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {66BAF5BD-970F-480F-92B9-761323FFAA58}
