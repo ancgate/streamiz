@@ -294,6 +294,21 @@ namespace Streamiz.Kafka.Net
         string ClientId { get; set; }
 
         /// <summary>
+        /// A host:port pair pointing to an endpoint (e.g. HTTP or gRPC) of this instance, which your application exposes to serve
+        /// interactive queries. When it is set, each instance publishes which tasks and stores it hosts in the internal topic
+        /// <c>&lt;application.id&gt;-streamiz-metadata</c>, so <see cref="KafkaStream.AllMetadata"/> and
+        /// <see cref="KafkaStream.QueryMetadataForKey{K}(string, K, SerDes.ISerDes{K})"/> know the other instances. Default : null.
+        /// </summary>
+        string ApplicationServer { get; set; }
+
+        /// <summary>
+        /// When <see cref="ApplicationServer"/> is set, interval at which each instance republishes its metadata (it is also
+        /// published as soon as its tasks change). An instance whose metadata is older than 3 times this interval is considered
+        /// dead. Default : 30 seconds.
+        /// </summary>
+        long MetadataHeartbeatIntervalMs { get; set; }
+
+        /// <summary>
         /// The number of threads to execute stream processing.
         /// </summary>
         int NumStreamThreads { get; set; }
@@ -495,7 +510,6 @@ namespace Streamiz.Kafka.Net
         
         #region Not used for moment
 
-        /// private string applicationServerCst = "application.server";
         /// private string topologyOptimizationCst = "topology.optimization";
         /// private string stateCleanupDelayMsCst = "state.cleanup.delay.ms";
 
@@ -505,12 +519,6 @@ namespace Streamiz.Kafka.Net
         ///     set => configProperties.AddOrUpdate(topologyOptimizationCst, value);
         /// }
 
-        /// private string ApplicationServer
-        /// {
-        ///     get => configProperties[applicationServerCst];
-        ///     set => configProperties.AddOrUpdate(applicationServerCst, value);
-        /// }
-        
         /// private long StateCleanupDelayMs
         /// {
         ///     get => Convert.ToInt64(configProperties[stateCleanupDelayMsCst]);
@@ -540,6 +548,8 @@ namespace Streamiz.Kafka.Net
         private const string protobufSerializerReferenceSubjectNameStrategyCst = "protobuf.serializer.reference.subject.name.strategy";
         private const string applicatonIdCst = "application.id";
         private const string clientIdCst = "client.id";
+        private const string applicationServerCst = "application.server";
+        private const string metadataHeartbeatIntervalMsCst = "metadata.heartbeat.interval.ms";
         private const string numStreamThreadsCst = "num.stream.threads";
         private const string defaultKeySerDesCst = "default.key.serdes";
         private const string defaultValueSerDesCst = "default.value.serdes";
@@ -2532,6 +2542,8 @@ namespace Streamiz.Kafka.Net
             WindowStoreChangelogAdditionalRetentionMs = (long)TimeSpan.FromDays(1).TotalMilliseconds;
             OffsetCheckpointManager = null;
             MetricsIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+            ApplicationServer = null;
+            MetadataHeartbeatIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
             MetricsRecording = MetricsRecordingLevel.INFO;
             LogProcessingSummary = TimeSpan.FromMinutes(1);
             MetricsReporter = _ => { }; // nothing by default, maybe another behavior in future
@@ -2725,6 +2737,31 @@ namespace Streamiz.Kafka.Net
         {
             get => configProperties[clientIdCst];
             set => configProperties.AddOrUpdate(clientIdCst, value);
+        }
+
+        /// <summary>
+        /// A host:port pair pointing to an endpoint (e.g. HTTP or gRPC) of this instance, which your application exposes to serve
+        /// interactive queries. When it is set, each instance publishes which tasks and stores it hosts in the internal topic
+        /// <c>&lt;application.id&gt;-streamiz-metadata</c>, so <see cref="KafkaStream.AllMetadata"/> and
+        /// <see cref="KafkaStream.QueryMetadataForKey{K}(string, K, SerDes.ISerDes{K})"/> know the other instances. Default : null.
+        /// </summary>
+        [StreamConfigProperty("" + applicationServerCst)]
+        public string ApplicationServer
+        {
+            get => configProperties[applicationServerCst];
+            set => configProperties.AddOrUpdate(applicationServerCst, value);
+        }
+
+        /// <summary>
+        /// When <see cref="ApplicationServer"/> is set, interval at which each instance republishes its metadata (it is also
+        /// published as soon as its tasks change). An instance whose metadata is older than 3 times this interval is considered
+        /// dead. Default : 30 seconds.
+        /// </summary>
+        [StreamConfigProperty("" + metadataHeartbeatIntervalMsCst)]
+        public long MetadataHeartbeatIntervalMs
+        {
+            get => configProperties[metadataHeartbeatIntervalMsCst];
+            set => configProperties.AddOrUpdate(metadataHeartbeatIntervalMsCst, value);
         }
 
         /// <summary>

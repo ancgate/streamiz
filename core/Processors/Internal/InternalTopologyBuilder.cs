@@ -608,6 +608,47 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
         #region Make Groups
 
+        /// <summary>
+        /// Source topics (decorated) and state stores of each sub-topology, global ones excluded (interactive queries metadata)
+        /// </summary>
+        internal IDictionary<int, (ISet<string> SourceTopics, ISet<string> StateStores)> SubTopologiesSourceTopicsAndStores()
+        {
+            var result = new Dictionary<int, (ISet<string> SourceTopics, ISet<string> StateStores)>();
+            foreach (var group in NodeGroups())
+            {
+                if (group.Value.Any(IsGlobalSource))
+                    continue;
+
+                var topics = new HashSet<string>();
+                var stores = new HashSet<string>();
+                foreach (var node in group.Value)
+                {
+                    if (!nodeFactories.TryGetValue(node, out var factory))
+                        continue;
+
+                    switch (factory)
+                    {
+                        case ISourceNodeFactory source when source.Topic != null:
+                            topics.Add(internalTopics.ContainsKey(source.Topic) ? DecorateTopic(source.Topic) : source.Topic);
+                            break;
+                        case IProcessorNodeFactory processor:
+                            foreach (var store in processor.StateStores)
+                                stores.Add(store);
+                            break;
+                    }
+                }
+
+                result[group.Key] = (topics, stores);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Names of the global state stores
+        /// </summary>
+        internal IEnumerable<string> GlobalStateStoreNames => globalStateBuilders.Keys;
+
         internal IDictionary<int, ISet<string>> NodeGroups()
         {
             if (nodeGroups == null)

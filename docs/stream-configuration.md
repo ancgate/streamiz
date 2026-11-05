@@ -198,6 +198,14 @@ Maximum allowed time between calls to consume messages for high-level consumers.
 [Deprecated] Maximum number of records to buffer per partition. (Default: Int32.MaxValue)
 If this number is exceeded, the consumer pauses for this partition until stream instance process messages.
 
+### ApplicationServer
+
+A `host:port` pair pointing to the endpoint where this instance serves interactive queries (default: none). When it is set, the instances of the application share their metadata (which tasks and stores each instance hosts) through the internal topic `<application.id>-streamiz-metadata`, so `KafkaStream.AllMetadata()` and `KafkaStream.QueryMetadataForKey(...)` know the other instances. See [Interactive queries](interactive-queries.md).
+
+### MetadataHeartbeatIntervalMs
+
+When `ApplicationServer` is set, interval at which each instance republishes its metadata (default: 30 seconds). It's also published as soon as its tasks change. An instance whose metadata is older than 3 times this interval is considered dead.
+
 ### InnerExceptionHandler
 
 Inner exception handling function called during processing.

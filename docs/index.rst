@@ -73,6 +73,7 @@ Need help
    stateless-processors
    stateful-processors
    stores
+   interactive-queries
    topology-test-driver
    monitoring
    async-processing

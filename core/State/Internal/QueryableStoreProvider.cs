@@ -42,7 +42,10 @@ namespace Streamiz.Kafka.Net.State.Internal
 
             if (!allStores.Any())
             {
-                throw new InvalidStateStoreException($"The state store, {storeQueryParameters.StoreName}, may have migrated to another instance.");
+                var partition = storeQueryParameters.Partition.HasValue
+                    ? $" for the partition {storeQueryParameters.Partition.Value}"
+                    : string.Empty;
+                throw new InvalidStateStoreException($"The state store, {storeQueryParameters.StoreName}{partition}, may have migrated to another instance.");
             }
 
             return storeQueryParameters
