@@ -13,7 +13,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
     /// </summary>
     internal class StateDirectory
     {
-        private static StateDirectory staticDirectoryInstance;
+        // one instance per state directory : several applications (or instances) in the same process have their own process id
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, StateDirectory> instances = new();
 
         private static ILogger log = Logger.GetLogger(typeof(StateDirectory));
         private bool hasPersistentStores;
@@ -44,10 +45,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
         public static StateDirectory GetInstance(IStreamConfig config, bool hasPersistentStores)
         {
-            if (staticDirectoryInstance == null)
-                staticDirectoryInstance = new StateDirectory(config, hasPersistentStores);
-
-            return staticDirectoryInstance;
+            return instances.GetOrAdd(Path.GetFullPath(config.StateDir),
+                _ => new StateDirectory(config, hasPersistentStores));
         }
         
         [MethodImpl(MethodImplOptions.Synchronized)]
