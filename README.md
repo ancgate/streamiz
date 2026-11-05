@@ -102,7 +102,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 |:------------------------------------------------------------:|:----------------------------------:|:----------------------:|:------------------------------------------:|
 | Stateless processors                                         |              X                     |         X              |                                            |
 | RocksDb store                                                |              X                     |         X              |                                            |
-| Standby replicas                                             |              X                     |                        |    No plan for now                         |
+| Standby replicas                                             |              X                     |         X              | Placement via the metadata topic           |
 | InMemory store                                               |              X                     |         X              |                                            |
 | Transformer, Processor API                                   |              X                     |         X              |                                            |
 | Punctuate                                                    |              X                     |         X              |                                            |
@@ -118,7 +118,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | Session window                                               |              X                     |         X              |                                            |
 | Cache                                                        |              X                     |         X              |                                            |
 | Suppress(..)                                                 |              X                     |         X              |                                            |
-| Interactive Queries                                          |              X                     |                        | No plan for now                            |
+| Interactive Queries                                          |              X                     |         X              | Cross-instance: set ApplicationServer      |
 | State store batch restoring                                  |              X                     |         X              |                                            |
 | Exactly Once                                                 |              X                     |         X              |                                            |
 | Remote storage (Azure, GCP, AWS, MongoDB)                    |                                    |         X              | Azure Table & Cosmos DB, GCP, AWS, MongoDB |

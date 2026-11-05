@@ -50,7 +50,7 @@ Each feature lists what exists today, how it would be built, the files it touche
 | 6. Performance (done) | Batch cache eviction | Needs benchmarks; touches the hot path |
 | 7. Async V2 (done, opt-in) | ParallelConsumer-style async processing | Largest redesign; best done once DLQ exists |
 | 8. Remote storage (done) | AWS (DynamoDB), GCP (Bigtable) + Azure fixes | Independent packages, can run in parallel with anything |
-| 9. Cluster features | Interactive Queries metadata, then standby replicas | Need a new metadata mechanism (no custom assignor) |
+| 9. Cluster features (done) | Interactive Queries metadata, then standby replicas | Need a new metadata mechanism (no custom assignor) |
 | 10. Needs scoping | KEDA autoscaling, broadcast, network shuffle, cross-cluster, "Extensions" | Roadmap entries are one line each; design must be agreed first |
 
 Each feature should ship as its own PR, with unit tests through `TopologyTestDriver`, and with updates to `docs/` and the README table.
@@ -432,26 +432,35 @@ Both need to know which instance owns which tasks. Kafka Streams carries that in
 - The writer's clock is used for expiry, so clock skew between instances matters.
 - No RPC layer: users expose their own HTTP or gRPC endpoint.
 
-### 9.2 Standby replicas (XL, after 9.1)
+### 9.2 Standby replicas (done)
 
-**Plan:**
-1. **Config.** Add `NumStandbyReplicas` (default 0).
-2. **Placement.**
-   - Every instance computes standby placement the same way, from the member list in the metadata topic.
-   - It uses rendezvous hashing on `(taskId, instanceId)` and skips the instance that owns the active task.
-3. **`StandbyTask : AbstractTask`.**
-   - It has no processing and no source partitions.
-   - It owns a `ProcessorStateManager` and checkpoint file.
-   - `TaskManager` keeps `standbyTasks` next to `activeTasks`, and creates or closes them when the metadata changes.
-4. **Changelog reader.**
-   - `StoreChangelogReader` gets a standby mode: partitions assigned with `Assign` (not as a group member) on the restore consumer, which never reach "completed" and are polled continuously in the `StreamThread` loop.
-   - Active restoration still has priority.
-5. **Promotion.** When a standby's task becomes active, reuse its state directory and checkpoint, so restoration only replays the remaining gap.
-6. **Queries.** Stale-store IQ (9.1) can then read standby stores.
+**Config:** `NumStandbyReplicas` (`num.standby.replicas`, default 0). When it's above 0, the metadata topic and manager run even without `ApplicationServer`.
 
-**Tests:**
-- Use `ASYNC_CLUSTER_IN_MEMORY` with two or three instances: standby catch-up, failover restore time, and promotion keeping the checkpoint.
-- Extend `TaskManagerTests` and `StoreChangelogReaderTests`.
+**Placement:**
+- Every instance computes the same placement from the metadata of all live instances.
+- Each stateful task (a sub-topology with a changelogged store) gets standbys on the N best-ranked instances that don't own it as active, ranked by rendezvous hashing.
+- When an instance joins or leaves, only the standbys that depended on it move.
+
+**Execution:**
+- One standby thread per instance, with its own restore consumer, updates every standby from its changelog through the batch restore path.
+- Checkpoints are written on the commit interval and when a standby closes.
+
+**Promotion:**
+- When a task becomes active on an instance that has its standby, the standby is closed with a checkpoint first.
+- The active task then replays only the gap; in the end-to-end test it restored 0 records, versus 20 without standbys.
+
+**Queries:** with `EnableStaleStores()`, the standby stores can be queried, and `KeyQueryMetadata.StandbyHosts` is filled in.
+
+**Bug fixed:** `StateDirectory` was a process-wide singleton built from the first configuration. Several instances or applications in one process with persistent stores shared one process id. It is now one per state directory path.
+
+**Tests:** 17. The end-to-end test passed 10 runs out of 10.
+
+**Differences from Kafka:**
+- Standbys run on a dedicated thread, not on the stream threads.
+- Placement follows the metadata topic, so it lags a rebalance.
+- An in-memory standby isn't recycled into the active task; it's rebuilt from the changelog.
+- No standby lag metric.
+- Old standby state directories aren't cleaned up.
 
 ---
 
