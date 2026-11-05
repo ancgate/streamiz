@@ -500,6 +500,72 @@ var table = builder.Table("table-input", AzureRemoteStorage.As<string, string>()
 - `Range`, `ReverseRange`, `All` and `ReverseAll` read all the entities of the task and filter and sort them by key bytes in the application, because Azure Tables can't compare byte arrays. They are fine for small stores, but each call reads the task's whole partition.
 - `ApproximateNumEntries` returns 0: Azure Tables can't count entities without reading all of them.
 
+### Azure Cosmos DB Key/Value store
+
+**This feature is available in `EARLY ACCESS` only.**
+
+The `Azure Cosmos DB Store` keeps a key/value store in an [Azure Cosmos DB for NoSQL](https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/) container instead of a local store and its changelog topic. It's a separate package from the Azure Table store, so the Cosmos DB SDK is only added when you use it.
+
+#### How to ?
+
+1- Install this nuget package
+
+```
+dotnet add package Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage
+```
+
+2- Use the helper class to materialize the `Azure Cosmos DB Store`
+
+``` csharp
+var table = builder.Table("table-input", CosmosRemoteStorage.As<string, string>());
+```
+
+3- Configure it, programmatically with `CosmosRemoteStorageOptions` or via the configuration :
+
+``` csharp
+config.AddConfig("azure.cosmos.remote.storage.connection.string", "AccountEndpoint=https://my-account.documents.azure.com:443/;AccountKey=...;");
+config.AddConfig("azure.cosmos.remote.storage.database", "my-database");
+```
+
+To use Azure AD instead of a key, set `AccountEndpoint` and `Credential` in code (for example `new DefaultAzureCredential()` from the `Azure.Identity` package, which you add to your application):
+
+``` csharp
+var table = builder.Table("table-input", CosmosRemoteStorage.As<string, string>(
+    new CosmosRemoteStorageOptions
+    {
+        AccountEndpoint = "https://my-account.documents.azure.com:443/",
+        Credential = new DefaultAzureCredential()
+    }));
+```
+
+| Option | Configuration key | Default |
+| --- | --- | --- |
+| `ConnectionString` | `azure.cosmos.remote.storage.connection.string` | a connection string, or `AccountEndpoint` with `AccountKey` or `Credential`, is required |
+| `AccountEndpoint` | `azure.cosmos.remote.storage.account.endpoint` | |
+| `AccountKey` | `azure.cosmos.remote.storage.account.key` | |
+| `Credential` | code only | |
+| `DatabaseName` | `azure.cosmos.remote.storage.database` | `streamiz` |
+| `ContainerPrefix` | `azure.cosmos.remote.storage.container.prefix` | none |
+| `CreateIfNotExists` (bool) | `azure.cosmos.remote.storage.create.if.not.exists` | `true` |
+| `Throughput` (int, RU/s of the created containers) | `azure.cosmos.remote.storage.throughput` | the account's default (serverless or shared throughput) |
+| `ConsistencyLevel` (`Session`, `Eventual`, ...) | `azure.cosmos.remote.storage.consistency.level` | the account's level |
+| `BatchSize` (int, 1 to 100) | `azure.cosmos.remote.storage.batch.size` | `100` operations per transactional batch in `PutAll` |
+| `MaxRetryAttemptsOnRateLimitedRequests` (int) | `azure.cosmos.remote.storage.max.retry.attempts.on.rate.limited.requests` | the SDK's default (9) |
+| `ConfigureClientOptions` | code only | changes the `CosmosClientOptions` before the client is created |
+
+A value set in code wins over the configuration.
+
+#### Behaviour
+
+- Each store has a container named `ContainerPrefix` + store name (`/`, `\`, `#` and `?` are replaced by `_`), in `DatabaseName`. The database and the container (partition key path `/t`) are created if they don't exist, unless `CreateIfNotExists` is false. If two applications have stores with the same name, give them different prefixes or databases.
+- Items are partitioned by task: `{ "id": ..., "t": "<task id>", "k": "<key bytes in lowercase hexadecimal>", "v": "<value bytes in base64>" }`. The hexadecimal strings compare like the key bytes, so `Range`, `ReverseRange`, `All` and `ReverseAll` are queries on the task's partition sorted by `k` (`ORDER BY c.k`), read page by page, and they return the keys in the same order as the local stores. The default indexing policy (a range index on every path) is enough.
+- The item id is the hexadecimal key. An id is limited to 1023 bytes, so a key longer than 500 bytes gets the id `h-` + the SHA-256 of the key (the empty key gets `e-`); the full key is still in `k`. Range queries compare `k`, so very long keys can be slower to query: keep keys short when you can.
+- Putting a `null` value deletes the item, and `Delete` reads and deletes the item in one transactional batch, returning the previous value.
+- `PutAll` keeps the last value of each key, sends the upserts in transactional batches of at most 100 operations (a Cosmos DB limit, all in the task's partition) and deletes the `null` values one by one (a transactional delete fails when the item doesn't exist).
+- `ApproximateNumEntries` is a `COUNT` query on the task's partition.
+- Throttled requests (HTTP 429) are retried by the SDK, see `MaxRetryAttemptsOnRateLimitedRequests`.
+- To use the [Cosmos DB emulator](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator), use its connection string. Accepting its self-signed certificate (for example with `ConfigureClientOptions` and an `HttpClientFactory`) is your responsibility, and must not be done in production.
+
 ### GCP Bigtable Key/Value store
 
 **This feature is available in `EARLY ACCESS` only.**
