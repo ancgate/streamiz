@@ -371,8 +371,35 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 - **Test project:** the test project's Newtonsoft.Json pin moved from 13.0.3 to 13.0.4, which the Google packages require.
 - **Tests:** 16.
 
+### Azure Cosmos DB: `Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage` (Microsoft.Azure.Cosmos 3.63.2)
+
+- **Data model:**
+  - One container per store, partitioned by task (`/t`).
+  - Item `{id, t, k: hex key, v: base64 value}`.
+  - The id is the hex key; keys over 500 bytes use a SHA-256 id instead, because of the 1,023-byte id limit.
+- **Operations:**
+  - Ordered by `k`; ranges are partition queries with `ORDER BY`, read lazily page by page.
+  - `Delete` is atomic: a transactional batch reads then deletes.
+  - `PutAll` uses transactional batches of up to 100 operations.
+  - The database and container are created if missing.
+- **Authentication:** connection string, account endpoint + key, or a `TokenCredential`.
+- **Tests:** 25.
+
+### MongoDB: `Streamiz.Kafka.Net.MongoDb.RemoteStorage` (MongoDB.Driver 3.12.0)
+
+- **Data model:**
+  - One collection per store.
+  - Document `{_id: task|hex, t, k: hex key, v}`.
+  - A unique index on `{t, k}` with the simple collation.
+- **Why hex keys:** BSON binary values sort by length first, so keys are stored as hex strings, which sort like the bytes.
+- **Operations:**
+  - `Delete` uses `FindOneAndDelete`, so it returns the old value.
+  - `PutAll` uses ordered bulk writes.
+- **Targets:** `netstandard2.1` and `net6.0`–`net8.0`. The 3.x driver dropped `netstandard2.0`, so .NET Framework apps can't use this package.
+- **Tests:** 21, one of them against a real MongoDB server. It only runs when `STREAMIZ_MONGODB_CONNECTION_STRING` is set.
+
 **Not done:**
-- No integration tests against LocalStack, the Bigtable emulator or Azurite.
+- No integration tests against LocalStack, the Bigtable emulator, the Cosmos DB emulator or Azurite.
 - No remote window or session stores.
 
 ---
@@ -381,24 +408,29 @@ Bugs 1 and 2 turned out not to be real (see section 0). Bug 3 is fixed, with tes
 
 Both need to know which instance owns which tasks. Kafka Streams carries that in its custom assignor's user data, and librdkafka gives Streamiz no equivalent. The proposed workaround is a small internal **metadata topic**.
 
-### 9.1 Interactive Queries across instances (L)
+### 9.1 Interactive Queries across instances (done)
 
-**Today:** local only. `KafkaStream.Store(...)` queries the active tasks on this instance. `application.server` is commented out in `StreamConfig`. In `StoreQueryParameters`, partition and stale-store options are commented out.
+**Config:** `ApplicationServer` (host:port) and `MetadataHeartbeatIntervalMs` (30 s).
 
-**Plan:**
-1. **Config.** Add `ApplicationServer` (`host:port`).
-2. **Metadata topic.**
-   - Add a compacted internal topic `<appId>-streamiz-metadata`.
-   - After each rebalance (`StreamsRebalanceListener.PartitionsAssigned` / `Revoked`), each instance writes `{instanceId, applicationServer, activeTasks, standbyTasks, generation}`, keyed by instance id. It writes a tombstone on clean shutdown.
-   - Every instance reads the topic in the background and keeps a `StreamsMetadataState`.
-3. **Public API on `KafkaStream`:**
-   - `AllMetadata()`
-   - `AllMetadataForStore(storeName)`
-   - `QueryMetadataForKey(storeName, key, keySerializer)`, which returns `KeyQueryMetadata{ActiveHost, StandbyHosts, Partition}`. The partition is computed with the same partitioner as the source topic.
-4. **`StoreQueryParameters`.** Bring back `WithPartition()` and `EnableStaleStores()`, and implement them in `StreamThreadStateStoreProvider` (which has a TODO for this).
-5. **Out of scope:** an RPC layer. As in Kafka Streams, users expose their own HTTP or gRPC endpoint. A sample in `launcher/` would show one with ASP.NET minimal APIs.
+**Metadata topic:**
+- When `ApplicationServer` is set, each instance publishes its threads, tasks and partitions as JSON to the compacted topic `<appId>-streamiz-metadata`, keyed by process id.
+- It publishes on every change and on every heartbeat, and writes a tombstone on a clean stop.
+- A reader on every instance keeps the state of all instances. An instance is considered dead when its heartbeat is older than 3 intervals.
 
-**Risk:** metadata can briefly be stale during a rebalance. The generation number lets callers detect it, and the docs must explain it.
+**API on `KafkaStream`:**
+- `AllMetadata()`, `AllMetadataForStore(store)`, `MetadataForLocalThreads()`.
+- `QueryMetadataForKey(store, key, serdes | partitioner)`. It uses the producer partitioner, murmur2 by default like Java clients.
+- `StoreQueryParameters.WithPartition(n)` and `EnableStaleStores()`.
+
+**Tests:** 12, including two instances on one mock cluster: the reported host holds the key, and the instance's metadata disappears once it's stopped.
+
+**Docs:** `docs/interactive-queries.md`.
+
+**Limitations:**
+- Metadata lags a rebalance by a few hundred milliseconds.
+- Crashed instances are only dropped after the heartbeat expiry.
+- The writer's clock is used for expiry, so clock skew between instances matters.
+- No RPC layer: users expose their own HTTP or gRPC endpoint.
 
 ### 9.2 Standby replicas (XL, after 9.1)
 

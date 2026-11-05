@@ -121,7 +121,7 @@ static async System.Threading.Tasks.Task Main(string[] args)
 | Interactive Queries                                          |              X                     |                        | No plan for now                            |
 | State store batch restoring                                  |              X                     |         X              |                                            |
 | Exactly Once                                                 |              X                     |         X              |                                            |
-| Remote storage (Azure, GCP, Aws)                             |                                    |         X              | Azure, GCP (Bigtable), AWS (DynamoDB)      |
+| Remote storage (Azure, GCP, AWS, MongoDB)                    |                                    |         X              | Azure Table & Cosmos DB, GCP, AWS, MongoDB |
 
 # Community Support
 
