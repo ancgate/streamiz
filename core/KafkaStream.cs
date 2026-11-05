@@ -300,6 +300,7 @@ namespace Streamiz.Kafka.Net
         private readonly SequentiallyGracefullyShutdownHook shutdownHook;
         private readonly Guid processId;
         private readonly StreamsMetadataManager metadataManager;
+        private readonly StandbyTasksManager standbyTasksManager;
 
         internal State StreamState { get; private set; }
 
@@ -483,6 +484,21 @@ namespace Streamiz.Kafka.Net
                 t.StateChanged += manager.OnChange;
             }
 
+            // standby replicas of the stateful tasks of the other instances
+            if (configuration.NumStandbyReplicas > 0)
+            {
+                standbyTasksManager = new StandbyTasksManager(
+                    clientId,
+                    configuration,
+                    this.kafkaSupplier,
+                    topology.Builder,
+                    metricsRegistry,
+                    LocalActiveTasks);
+                foreach (var t in threads.OfType<StreamThread>())
+                    t.UseStandbyTasks(standbyTasksManager);
+                stateStoreProviders.Add(new StandbyTasksStateStoreProvider(standbyTasksManager, topology.Builder));
+            }
+
             var globalStateStoreProvider = new GlobalStateStoreProvider(topology.Builder.GlobalStateStores);
             queryableStoreProvider = new QueryableStoreProvider(stateStoreProviders, globalStateStoreProvider);
 
@@ -493,7 +509,8 @@ namespace Streamiz.Kafka.Net
                 this.kafkaSupplier,
                 clientId,
                 topology.Builder,
-                threads);
+                threads,
+                standbyTasksManager);
 
             StreamState = State.CREATED;
 
@@ -561,6 +578,7 @@ namespace Streamiz.Kafka.Net
                     }
 
                     metadataManager.Start();
+                    standbyTasksManager?.Start();
                     
                     RunMiddleware(false, true);
                 }
@@ -610,6 +628,7 @@ namespace Streamiz.Kafka.Net
 
                 // publish the tombstone of this instance first, so the other instances stop routing queries here
                 metadataManager.Dispose();
+                standbyTasksManager?.Dispose();
                 
                 shutdownHook.Shutdown();
 
@@ -801,7 +820,7 @@ namespace Streamiz.Kafka.Net
             await InternalTopicManagerUtils.New(configuration).CreateInternalTopicsAsync(internalTopicManager, topology.Builder, configuration.AllowAutoCreateTopics ?? false);
 
             // metadata topic of the interactive queries : compacted, one partition
-            if (metadataManager.IsShared)
+            if (metadataManager.Enabled)
                 await internalTopicManager.ApplyAsync(-1, new Dictionary<string, InternalTopicConfig>
                 {
                     {
@@ -809,6 +828,26 @@ namespace Streamiz.Kafka.Net
                         new UnwindowedChangelogTopicConfig {Name = metadataManager.MetadataTopic, NumberPartitions = 1}
                     }
                 }, configuration.AllowAutoCreateTopics ?? false);
+        }
+
+        // active tasks of the threads of this instance
+        private ISet<TaskId> LocalActiveTasks()
+        {
+            var tasks = new HashSet<TaskId>();
+            foreach (var t in threads)
+            {
+                try
+                {
+                    foreach (var task in t.ActiveTasks)
+                        tasks.Add(task.Id);
+                }
+                catch (Exception e) when (e is NotSupportedException or InvalidOperationException)
+                {
+                    // not a stream thread, or its tasks are changing
+                }
+            }
+
+            return tasks;
         }
 
         private void RunMiddleware(bool before, bool start)

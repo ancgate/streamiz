@@ -99,6 +99,11 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly Thread thread;
         private readonly IConsumer<byte[], byte[]> consumer;
         private TaskManager Manager { get; }
+
+        /// <summary>
+        /// Standby replicas of the instance, told when the tasks of this thread become active or are closed
+        /// </summary>
+        internal void UseStandbyTasks(IStandbyTasksListener standbyTasks) => Manager.StandbyTasks = standbyTasks;
         private readonly InternalTopologyBuilder builder;
         private readonly TimeSpan consumeTimeout;
         private readonly string threadId;

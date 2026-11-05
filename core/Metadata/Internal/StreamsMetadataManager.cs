@@ -17,7 +17,9 @@ namespace Streamiz.Kafka.Net.Processors.Internal
     /// Shares the metadata of the instances of an application (interactive queries) through the compacted topic
     /// <c>&lt;application.id&gt;-streamiz-metadata</c> : a background thread publishes the tasks of this instance (when they
     /// change, and every <see cref="IStreamConfig.MetadataHeartbeatIntervalMs"/>) and reads the metadata of the other instances.
-    /// It only runs when <see cref="IStreamConfig.ApplicationServer"/> is set; otherwise only the local instance is known.
+    /// It only runs when <see cref="IStreamConfig.ApplicationServer"/> is set, or when standby replicas are enabled
+    /// (<see cref="IStreamConfig.NumStandbyReplicas"/>) : it then also computes the placement of the standby replicas
+    /// (<see cref="StandbyPlacement"/>). Otherwise only the local instance is known.
     /// </summary>
     internal class StreamsMetadataManager : IDisposable
     {
@@ -33,6 +35,9 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         private readonly IEnumerable<IThread> threads;
         private readonly ConcurrentDictionary<string, int> partitionCounts = new();
         private readonly TimeSpan heartbeatInterval;
+        private readonly StandbyTasksManager standbyTasks;
+        private readonly int numStandbyReplicas;
+        private readonly IDictionary<int, ISet<string>> statefulSubTopologies;
 
         private Thread thread;
         private volatile bool running;
@@ -46,8 +51,14 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             IKafkaSupplier kafkaSupplier,
             string clientId,
             InternalTopologyBuilder builder,
-            IEnumerable<IThread> threads)
+            IEnumerable<IThread> threads,
+            StandbyTasksManager standbyTasks = null)
         {
+            this.standbyTasks = standbyTasks;
+            numStandbyReplicas = standbyTasks != null ? config.NumStandbyReplicas : 0;
+            statefulSubTopologies = standbyTasks != null
+                ? builder.StatefulSubTopologiesSourceTopics()
+                : new Dictionary<int, ISet<string>>();
             this.instanceId = instanceId;
             this.config = config;
             this.kafkaSupplier = kafkaSupplier;
@@ -85,6 +96,11 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         /// </summary>
         internal bool IsShared => !Equals(host, HostInfo.Unavailable);
 
+        /// <summary>
+        /// The metadata topic is used : to share the metadata with the other instances, or to place the standby replicas
+        /// </summary>
+        internal bool Enabled => IsShared || standbyTasks != null;
+
         internal InstanceMetadata LocalSnapshot()
         {
             var metadata = new InstanceMetadata
@@ -120,6 +136,27 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 metadata.Threads.Add(threadInfo);
             }
 
+            if (standbyTasks != null)
+            {
+                metadata.Threads.Add(new ThreadInfo
+                {
+                    ThreadName = standbyTasks.ThreadName,
+                    State = "RUNNING",
+                    StandbyTasks = standbyTasks.StandbyTasks
+                        .OrderBy(task => task.Id.Id).ThenBy(task => task.Id.Partition)
+                        .Select(task => new TaskInfo
+                        {
+                            SubTopology = task.Id.Id,
+                            Partition = task.Id.Partition,
+                            TopicPartitions = task.Partition
+                                .OrderBy(p => p.Topic).ThenBy(p => p.Partition.Value)
+                                .Select(p => new TaskTopicPartition {Topic = p.Topic, Partition = p.Partition.Value})
+                                .ToList()
+                        })
+                        .ToList()
+                });
+            }
+
             return metadata;
         }
 
@@ -145,9 +182,50 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             }
         }
 
+        /// <summary>
+        /// Place the standby replicas from the live instances and their active tasks, and give this instance's ones to the
+        /// <see cref="StandbyTasksManager"/>. Every instance computes the same placement.
+        /// </summary>
+        internal void UpdateStandbyPlacement()
+        {
+            if (standbyTasks == null)
+                return;
+
+            var tasks = StatefulTasks();
+            var instances = State.Instances()
+                .Select(i => (i.InstanceId, (ISet<TaskId>) new HashSet<TaskId>(
+                    i.ActiveTasks.Select(t => new TaskId {Id = t.SubTopology, Partition = t.Partition}))))
+                .ToList();
+
+            var placement = StandbyPlacement.Compute(tasks.Keys, instances, numStandbyReplicas);
+            if (placement.TryGetValue(instanceId, out var mine))
+                standbyTasks.SetDesiredStandbyTasks(mine.ToDictionary(t => t, t => tasks[t]));
+        }
+
+        // the tasks of the sub-topologies with changelogged stores, and their source partitions
+        private IDictionary<TaskId, IList<TopicPartition>> StatefulTasks()
+        {
+            var tasks = new Dictionary<TaskId, IList<TopicPartition>>();
+            foreach (var subTopology in statefulSubTopologies)
+            {
+                var counts = subTopology.Value.Select(topic => (topic, count: PartitionCount(topic))).ToList();
+                // the source topics of a sub-topology are co-partitioned
+                var numPartitions = counts.Count == 0 ? 0 : counts.Max(c => c.count ?? 0);
+                for (int partition = 0; partition < numPartitions; ++partition)
+                {
+                    tasks[new TaskId {Id = subTopology.Key, Partition = partition}] = counts
+                        .Where(c => c.count > partition)
+                        .Select(c => new TopicPartition(c.topic, partition))
+                        .ToList();
+                }
+            }
+
+            return tasks;
+        }
+
         internal void Start()
         {
-            if (!IsShared || running)
+            if (!Enabled || running)
                 return;
 
             running = true;
@@ -179,6 +257,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                         HandleRecord(record);
                         record = consumer.Consume(TimeSpan.Zero);
                     }
+
+                    UpdateStandbyPlacement();
                 }
 
                 // stopped cleanly : the other instances stop routing queries to this instance

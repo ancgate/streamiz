@@ -84,6 +84,11 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         }
         internal readonly object _lock = new object();
 
+        /// <summary>
+        /// Standby replicas of this instance (num.standby.replicas &gt; 0) : told when tasks become active here or are closed
+        /// </summary>
+        internal IStandbyTasksListener StandbyTasks { get; set; }
+
         internal TaskManager(InternalTopologyBuilder builder, TaskCreator taskCreator, IAdminClient adminClient,
             IChangelogReader changelogReader, StreamsProducer producer)
         {
@@ -123,6 +128,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
             if (tasksToBeCreated.Count > 0)
             {
+                // a standby replica of these tasks is closed first : the active tasks reuse its stores and checkpoint
+                StandbyTasks?.BeforeActiveTasksCreated(tasksToBeCreated.Keys.ToList());
                 var tasks = taskCreator.CreateTasks(Consumer, Producer, tasksToBeCreated);
                 foreach (var task in tasks)
                 {
@@ -179,6 +186,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 rvTask.Suspend();
                 rvTask.Close(false);
             }
+
+            StandbyTasks?.ActiveTasksClosed(revokedTask.Select(t => t.Id).ToList());
             
             foreach(var acT in commitNeededActiveTask)
                 acT.PostCommit(false);
@@ -226,6 +235,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             
             Producer.Dispose();
 
+            StandbyTasks?.ActiveTasksClosed(activeTasks.Keys.ToList());
             activeTasks.Clear();
             CurrentTask = null;
             
@@ -426,6 +436,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     partitionsToTaskId.TryRemove(part, out TaskId taskId);
                 }
             }
+            StandbyTasks?.ActiveTasksClosed(activeTasks.Keys.ToList());
             activeTasks.Clear();
             
             if (Producer.EosEnabled)

@@ -206,6 +206,10 @@ A `host:port` pair pointing to the endpoint where this instance serves interacti
 
 When `ApplicationServer` is set, interval at which each instance republishes its metadata (default: 30 seconds). It's also published as soon as its tasks change. An instance whose metadata is older than 3 times this interval is considered dead.
 
+### NumStandbyReplicas
+
+Number of standby replicas of each stateful task (default: 0). A standby replica is a copy of the state stores of a task on another instance, kept up to date from the changelog topics: when the task moves to that instance, only the records written since the last update are restored (persistent stores), and the standby stores can be queried as stale stores. The standby replicas are placed using the metadata topic (it's also used when `ApplicationServer` isn't set). See [Interactive queries](interactive-queries.md#standby-replicas).
+
 ### InnerExceptionHandler
 
 Inner exception handling function called during processing.

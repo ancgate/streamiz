@@ -71,7 +71,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         /// <summary>
         /// The local instance and the remote instances which are alive
         /// </summary>
-        private List<InstanceMetadata> Instances()
+        internal List<InstanceMetadata> Instances()
         {
             var instances = new List<InstanceMetadata>();
             var local = localSnapshot();

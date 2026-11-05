@@ -309,6 +309,15 @@ namespace Streamiz.Kafka.Net
         long MetadataHeartbeatIntervalMs { get; set; }
 
         /// <summary>
+        /// Number of standby replicas of each stateful task (default : 0). A standby replica is a copy of the state stores of a task
+        /// on another instance, kept up to date from the changelog topics : when the task moves to that instance, only the records
+        /// written since the last update of the standby are restored (persistent stores), and the standby stores can be queried with
+        /// <see cref="StoreQueryParameters{T,K,V}.EnableStaleStores"/>. Standby replicas are placed on the other instances of the
+        /// application, known from the metadata topic (it is also used when <see cref="ApplicationServer"/> is not set).
+        /// </summary>
+        int NumStandbyReplicas { get; set; }
+
+        /// <summary>
         /// The number of threads to execute stream processing.
         /// </summary>
         int NumStreamThreads { get; set; }
@@ -550,6 +559,7 @@ namespace Streamiz.Kafka.Net
         private const string clientIdCst = "client.id";
         private const string applicationServerCst = "application.server";
         private const string metadataHeartbeatIntervalMsCst = "metadata.heartbeat.interval.ms";
+        private const string numStandbyReplicasCst = "num.standby.replicas";
         private const string numStreamThreadsCst = "num.stream.threads";
         private const string defaultKeySerDesCst = "default.key.serdes";
         private const string defaultValueSerDesCst = "default.value.serdes";
@@ -2544,6 +2554,7 @@ namespace Streamiz.Kafka.Net
             MetricsIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
             ApplicationServer = null;
             MetadataHeartbeatIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+            NumStandbyReplicas = 0;
             MetricsRecording = MetricsRecordingLevel.INFO;
             LogProcessingSummary = TimeSpan.FromMinutes(1);
             MetricsReporter = _ => { }; // nothing by default, maybe another behavior in future
@@ -2762,6 +2773,25 @@ namespace Streamiz.Kafka.Net
         {
             get => configProperties[metadataHeartbeatIntervalMsCst];
             set => configProperties.AddOrUpdate(metadataHeartbeatIntervalMsCst, value);
+        }
+
+        /// <summary>
+        /// Number of standby replicas of each stateful task (default : 0). A standby replica is a copy of the state stores of a task
+        /// on another instance, kept up to date from the changelog topics : when the task moves to that instance, only the records
+        /// written since the last update of the standby are restored (persistent stores), and the standby stores can be queried with
+        /// <see cref="StoreQueryParameters{T,K,V}.EnableStaleStores"/>. Standby replicas are placed on the other instances of the
+        /// application, known from the metadata topic (it is also used when <see cref="ApplicationServer"/> is not set).
+        /// </summary>
+        [StreamConfigProperty("" + numStandbyReplicasCst)]
+        public int NumStandbyReplicas
+        {
+            get => configProperties[numStandbyReplicasCst];
+            set
+            {
+                if (value < 0)
+                    throw new StreamConfigException($"{numStandbyReplicasCst} can't be negative (got {value})");
+                configProperties.AddOrUpdate(numStandbyReplicasCst, value);
+            }
         }
 
         /// <summary>

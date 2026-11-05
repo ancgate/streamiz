@@ -17,7 +17,13 @@ namespace Streamiz.Kafka.Net.State.Internal
             this.internalTopologyBuilder = internalTopologyBuilder;
         }
 
-        public IEnumerable<T> Stores<T, K, V>(StoreQueryParameters<T, K, V> storeQueryParameters) 
+        // for the stores of tasks which don't belong to a stream thread (standby replicas)
+        protected StreamThreadStateStoreProvider(InternalTopologyBuilder internalTopologyBuilder)
+        {
+            this.internalTopologyBuilder = internalTopologyBuilder;
+        }
+
+        public virtual IEnumerable<T> Stores<T, K, V>(StoreQueryParameters<T, K, V> storeQueryParameters) 
             where T : class
         {
             if (this.streamThread.State == ThreadState.DEAD)
@@ -35,7 +41,12 @@ namespace Streamiz.Kafka.Net.State.Internal
                     $"the stream thread is {streamThread.State}, not RUNNING");
             }
 
-            var tasks = streamThread.ActiveTasks;
+            return StoresOf(streamThread.ActiveTasks, storeQueryParameters);
+        }
+
+        protected static IEnumerable<T> StoresOf<T, K, V>(IEnumerable<ITask> tasks, StoreQueryParameters<T, K, V> storeQueryParameters)
+            where T : class
+        {
             if (storeQueryParameters.Partition.HasValue)
                 tasks = tasks.Where(t => t.Id.Partition == storeQueryParameters.Partition.Value);
 

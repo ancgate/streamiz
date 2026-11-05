@@ -645,6 +645,19 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         }
 
         /// <summary>
+        /// Source topics of the sub-topologies with at least one store backed by a changelog topic : their tasks can have
+        /// standby replicas
+        /// </summary>
+        internal IDictionary<int, ISet<string>> StatefulSubTopologiesSourceTopics()
+            => SubTopologiesSourceTopicsAndStores()
+                .Where(s => s.Value.StateStores.Any(HasChangelog))
+                .ToDictionary(s => s.Key, s => s.Value.SourceTopics);
+
+        private bool HasChangelog(string storeName)
+            => storesToTopics.ContainsKey(storeName) ||
+               (stateFactories.TryGetValue(storeName, out var factory) && factory.LoggingEnabled);
+
+        /// <summary>
         /// Names of the global state stores
         /// </summary>
         internal IEnumerable<string> GlobalStateStoreNames => globalStateBuilders.Keys;
