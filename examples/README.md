@@ -47,6 +47,26 @@ Each example prints the input topics to create and its topology when it starts.
 | [11-Observability](11-Observability/README.md) | Logging, metrics with Prometheus and OpenTelemetry, end-to-end latency, state listeners |
 | [12-Hosting](12-Hosting/README.md) | Running Streamiz in a .NET Generic Host / worker service and in ASP.NET Core |
 | [13-Testing](13-Testing/README.md) | Unit testing topologies with the `TopologyTestDriver` |
+| [14-RealWorld](14-RealWorld/README.md) | End-to-end scenarios on the sample data: e-commerce revenue, order-payment matching, fraud detection, IoT monitoring, clickstream analytics, stock candles |
+
+## Sample data
+
+[`data/`](data/README.md) has realistic datasets to try the examples with: an online shop (customers, products
+with price changes, orders, payments, shipments), a website's clickstream with bots, temperature sensors with late
+and out-of-order readings, card transactions with frauds, a day of stock trades, and malformed records. They're
+deterministic, and the patterns planted in them (and the results expected) are documented. The data README also
+lists public live sources (Wikimedia, USGS, GitHub, NYC taxis, crypto exchanges, OpenSky) and how to bridge them
+into Kafka.
+
+[`DataGenerator/`](DataGenerator/README.md) (`datagen`) loads a dataset into Kafka with its event times, produces
+live events (with late, out-of-order and malformed ones on demand), and bridges Wikimedia's live edits:
+
+```bash
+cd examples/DataGenerator
+dotnet run -- create-topics
+dotnet run -- load ecommerce
+dotnet run -- live iot --rate 50 --late 0.02
+```
 
 ## Layout
 
@@ -54,6 +74,8 @@ Each example prints the input topics to create and its topology when it starts.
 examples/
   Directory.Build.props          shared settings (net8.0)
   Streamiz.Examples.Common/      IExample + ExampleRunner used by every group
+  data/                          sample datasets (JSON Lines) and their documented facts
+  DataGenerator/                 datagen: load, live, create-topics, bridge, generate-files
   NN-Group/
     README.md                    what each example shows, with sample input and output
     src/                         console application (one file per example)
