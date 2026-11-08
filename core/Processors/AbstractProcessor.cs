@@ -355,7 +355,7 @@ namespace Streamiz.Kafka.Net.Processors
             return Name.GetHashCode();
         }
 
-        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true)
+        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false)
         {
             try
             {
@@ -363,6 +363,10 @@ namespace Streamiz.Kafka.Net.Processors
                 return new ObjectDeserialized(o, false);
             }catch(Exception e)
             {
+                // only deserialized for the timestamp extractor: the error is handled when the record is processed
+                if (forTimestampExtraction)
+                    return new ObjectDeserialized(null, false);
+
                 var handlerResponse = Context.Configuration.DeserializationExceptionHandler != null ?
                     Context.Configuration.DeserializationExceptionHandler(Context, record, e) : ExceptionHandlerResponse.FAIL;
 
@@ -374,15 +378,14 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during key deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
-                    if (sendToDeadLetterQueue)
-                        DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
+                    DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }
 
         }
 
-        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true)
+        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false)
         {
             try
             {
@@ -391,6 +394,10 @@ namespace Streamiz.Kafka.Net.Processors
             }
             catch (Exception e)
             {
+                // only deserialized for the timestamp extractor: the error is handled when the record is processed
+                if (forTimestampExtraction)
+                    return new ObjectDeserialized(null, false);
+
                 var handlerResponse = Context.Configuration.DeserializationExceptionHandler != null ?
                     Context.Configuration.DeserializationExceptionHandler(Context, record, e) : ExceptionHandlerResponse.FAIL;
 
@@ -402,8 +409,7 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during value deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
-                    if (sendToDeadLetterQueue)
-                        DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
+                    DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }

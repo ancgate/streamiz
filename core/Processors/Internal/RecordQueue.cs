@@ -131,7 +131,10 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 throw new ArgumentNullException("record.Message");
             if (sourceProcessor == null)
                 throw new ArgumentNullException("sourceProcessor");
-            
+
+            // the built-in extractors only read the record timestamp: no need to deserialize the key and value
+            bool deserialize = timestampExtractor is not ExtractRecordMetadataTimestamp;
+
             return new ConsumeResult<object, object>
             {
                 Topic = record.Topic,
@@ -142,8 +145,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 {
                     Headers = record.Message.Headers,
                     Timestamp = record.Message.Timestamp,
-                    Key = sourceProcessor.DeserializeKey(record, false).Bean,
-                    Value = sourceProcessor.DeserializeValue(record, false).Bean
+                    Key = deserialize ? sourceProcessor.DeserializeKey(record, true).Bean : null,
+                    Value = deserialize ? sourceProcessor.DeserializeValue(record, true).Bean : null
                 },
                 Partition = record.Partition
             };

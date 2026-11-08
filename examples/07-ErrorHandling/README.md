@@ -29,7 +29,7 @@ p2 -> {not json                                     =>  skipped (handler called)
 p3 -> {"Id":"p3","Amount":3,"Currency":"USD"}       =>  payment-amounts: 3 USD
 ```
 
-Note: the handler can be called twice for the same record (the record is also deserialized for the timestamp extractor).
+The handler is called once per bad record.
 
 ## processing-errors
 

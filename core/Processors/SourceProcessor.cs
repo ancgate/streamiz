@@ -12,10 +12,11 @@ namespace Streamiz.Kafka.Net.Processors
     {
         string TopicName { get; set; }
         ITimestampExtractor Extractor { get; }
-        // sendToDeadLetterQueue: false when the record is only deserialized for the timestamp extractor,
-        // so a skipped record is sent once, when it is processed
-        ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true);
-        ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool sendToDeadLetterQueue = true);
+        // forTimestampExtraction: the record is only deserialized for the timestamp extractor. A deserialization error
+        // gives a null key/value to the extractor: the DeserializationExceptionHandler (and the dead letter queue) are
+        // only used once, when the record is processed
+        ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false);
+        ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false);
     }
 
     internal class SourceProcessor<K, V> : AbstractProcessor<K, V>, ISourceProcessor

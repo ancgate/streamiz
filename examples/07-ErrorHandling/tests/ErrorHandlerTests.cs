@@ -21,8 +21,8 @@ public class ErrorHandlerTests
         payments.PipeInput("p3", "{\"Id\":\"p3\",\"Amount\":3,\"Currency\":\"USD\"}");
 
         CollectionAssert.AreEqual(new[] { "10.5 EUR", "3 USD" }, amounts.ReadValueList());
-        // the record at offset 1 was skipped (logged once per deserialization attempt)
-        Assert.IsNotEmpty(example.Skipped);
+        // the record at offset 1 was skipped: the handler is called once per bad record
+        Assert.AreEqual(1, example.Skipped.Count);
         StringAssert.StartsWith("payments[0]@1", example.Skipped[0]);
     }
 
