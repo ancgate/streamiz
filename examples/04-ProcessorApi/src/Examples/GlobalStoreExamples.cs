@@ -91,10 +91,10 @@ public class EurConverter : ITransformer<string, string, string, string>
         var parts = record.Value.Split(';');
         var rate = rates.Get(parts[0]);
         if (rate == null)
-            return Record<string, string>.Create(record.Key, $"{parts[1]} {parts[0]} (no rate)", record.Headers);
+            return Record<string, string>.Create(record.Key, $"{parts[1]} {parts[0]} (no rate)");
 
         var eur = decimal.Parse(parts[1], CultureInfo.InvariantCulture) * decimal.Parse(rate, CultureInfo.InvariantCulture);
-        return Record<string, string>.Create(record.Key, $"{eur.ToString("0.00", CultureInfo.InvariantCulture)} EUR", record.Headers);
+        return Record<string, string>.Create(record.Key, $"{eur.ToString("0.00", CultureInfo.InvariantCulture)} EUR");
     }
 
     public void Close()
@@ -153,7 +153,7 @@ public class ProductLookupTransformer : ITransformer<string, string, string, str
         var parts = record.Value.Split(';');
         var product = catalog.Get(parts[0]); // ValueAndTimestamp<string>, or null
         var name = product?.Value ?? $"unknown product {parts[0]}";
-        return Record<string, string>.Create(record.Key, $"{parts[1]} x {name}", record.Headers);
+        return Record<string, string>.Create(record.Key, $"{parts[1]} x {name}");
     }
 
     public void Close()

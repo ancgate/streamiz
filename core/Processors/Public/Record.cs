@@ -35,6 +35,12 @@ namespace Streamiz.Kafka.Net.Processors.Public
         /// </summary>
         public V Value { get; }
 
+        /// <summary>
+        /// True if the headers were given when the record was created. A record created without headers
+        /// (<see cref="Create(K,V)"/>, <see cref="Create(V)"/>) keeps the headers of the record being processed.
+        /// </summary>
+        internal bool HeadersProvided { get; private set; }
+
         internal Record(TopicPartitionOffset topicPartitionOffset, Headers headers, Timestamp timestamp, K key, V value)
             : this(key, value, headers)
         {
@@ -52,19 +58,24 @@ namespace Streamiz.Kafka.Net.Processors.Public
             : this(key, value)
         {
             Headers = headers;
+            HeadersProvided = true;
         }
 
         private Record(V value) : this(value, new Headers())
-        { }
+        {
+            HeadersProvided = false;
+        }
         
         private Record(V value, Headers headers)
         {
             Value = value;
             Headers = headers;
+            HeadersProvided = true;
         }
 
         /// <summary>
-        /// Use this helper method for returning a new record (key/value) with <see cref="IKStream{K,V}.Transform{K1,V1}"/>
+        /// Use this helper method for returning a new record (key/value) with <see cref="IKStream{K,V}.Transform{K1,V1}"/>.
+        /// The record keeps the headers of the record being processed; headers added to <see cref="Headers"/> are appended to them.
         /// </summary>
         /// <param name="key">Key of the record</param>
         /// <param name="value">Value of the record</param>
@@ -73,7 +84,8 @@ namespace Streamiz.Kafka.Net.Processors.Public
             => new(key, value);
 
         /// <summary>
-        /// Use this helper method for returning a new record (value) with <see cref="IKStream{K,V}.TransformValues{V1}"/>
+        /// Use this helper method for returning a new record (value) with <see cref="IKStream{K,V}.TransformValues{V1}"/>.
+        /// The record keeps the headers of the record being processed; headers added to <see cref="Headers"/> are appended to them.
         /// </summary>
         /// <param name="value">Value of the record</param>
         /// <returns>return a new value record</returns>
@@ -81,7 +93,8 @@ namespace Streamiz.Kafka.Net.Processors.Public
             => new(value);
         
         /// <summary>
-        /// Use this helper method for returning a new record (value) and headers with <see cref="IKStream{K,V}.TransformValues{V1}"/>
+        /// Use this helper method for returning a new record (value) and headers with <see cref="IKStream{K,V}.TransformValues{V1}"/>.
+        /// The given headers replace the headers of the record being processed.
         /// </summary>
         /// <param name="value">Value of the record</param>
         /// <param name="headers">Headers of the record</param>
@@ -90,7 +103,8 @@ namespace Streamiz.Kafka.Net.Processors.Public
             => new(value, headers);
 
         /// <summary>
-        /// Use this helper method for returning a new record (key/value) and headers with <see cref="IKStream{K,V}.Transform{K1,V1}"/>
+        /// Use this helper method for returning a new record (key/value) and headers with <see cref="IKStream{K,V}.Transform{K1,V1}"/>.
+        /// The given headers replace the headers of the record being processed.
         /// </summary>
         /// <param name="key">Key of the record</param>
         /// <param name="value">Value of the record</param>

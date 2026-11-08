@@ -22,7 +22,7 @@ Documentation: [Processor API](../../docs/processor-api.md), [state stores](../.
 
 ### `mask-card-numbers`
 
-`TransformValues` with a lambda transformer: mask the card number of each payment. The key doesn't change, so no repartitioning is needed later. The transformer passes `record.Headers` to the record it returns: a record created without headers would clear them. Input `payments`, output `payments-masked`.
+`TransformValues` with a lambda transformer: mask the card number of each payment. The key doesn't change, so no repartitioning is needed later. The record it returns is created without headers, so it keeps the headers of the input record. Input `payments`, output `payments-masked`.
 
 | Input | Output |
 | --- | --- |

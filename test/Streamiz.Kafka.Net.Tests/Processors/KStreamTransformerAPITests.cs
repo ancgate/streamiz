@@ -373,5 +373,61 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             }
         }
 
-    }
+    
+        private static ConsumeResult<string, string> PipeWithHeader(System.Func<TransformerBuilder<string, string, string, string>, TransformerBuilder<string, string, string, string>> transformer, bool changeKey)
+        {
+            var builder = new StreamBuilder();
+            var stream = builder.Stream<string, string>("topic");
+            var supplier = transformer(TransformerBuilder.New<string, string, string, string>()).Build();
+            (changeKey ? stream.Transform(supplier) : stream.TransformValues(supplier)).To("topic-output");
+
+            var config = new StreamConfig<StringSerDes, StringSerDes> {ApplicationId = "test-transformer-headers"};
+            using var driver = new TopologyTestDriver(builder.Build(), config);
+            var inputTopic = driver.CreateInputTopic<string, string>("topic");
+            var headers = new Headers {{"trace-id", Encoding.UTF8.GetBytes("abc")}};
+            inputTopic.PipeInput("key1", "value1", headers);
+            return driver.CreateOutputTopic<string, string>("topic-output").ReadKeyValue();
+        }
+
+        [Test]
+        public void TransformRecordCreatedWithoutHeadersKeepsTheInputHeaders()
+        {
+            var record = PipeWithHeader(b => b.Transformer(r => Record<string, string>.Create(r.Key + "!", r.Value.ToUpper())), true);
+            Assert.AreEqual("key1!", record.Message.Key);
+            Assert.AreEqual(1, record.Message.Headers.Count);
+            Assert.AreEqual("abc", Encoding.UTF8.GetString(record.Message.Headers.GetLastBytes("trace-id")));
+        }
+
+        [Test]
+        public void TransformValuesRecordCreatedWithoutHeadersKeepsTheInputHeaders()
+        {
+            var record = PipeWithHeader(b => b.Transformer(r => Record<string, string>.Create(r.Value.ToUpper())), false);
+            Assert.AreEqual("VALUE1", record.Message.Value);
+            Assert.AreEqual(1, record.Message.Headers.Count);
+            Assert.AreEqual("abc", Encoding.UTF8.GetString(record.Message.Headers.GetLastBytes("trace-id")));
+        }
+
+        [Test]
+        public void HeadersAddedToARecordCreatedWithoutHeadersAreAppended()
+        {
+            var record = PipeWithHeader(b => b.Transformer(r =>
+            {
+                var result = Record<string, string>.Create(r.Key, r.Value);
+                result.Headers.Add("processed-by", Encoding.UTF8.GetBytes("transformer"));
+                return result;
+            }), true);
+            Assert.AreEqual(2, record.Message.Headers.Count);
+            Assert.AreEqual("abc", Encoding.UTF8.GetString(record.Message.Headers.GetLastBytes("trace-id")));
+            Assert.AreEqual("transformer", Encoding.UTF8.GetString(record.Message.Headers.GetLastBytes("processed-by")));
+        }
+
+        [Test]
+        public void ExplicitHeadersReplaceTheInputHeaders()
+        {
+            var record = PipeWithHeader(b => b.Transformer(r =>
+                Record<string, string>.Create(r.Key, r.Value, new Headers {{"only", Encoding.UTF8.GetBytes("me")}})), true);
+            Assert.AreEqual(1, record.Message.Headers.Count);
+            Assert.IsNull(record.Message.Headers.FirstOrDefault(h => h.Key == "trace-id"));
+        }
+}
 }

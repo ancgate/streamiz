@@ -24,9 +24,9 @@ public class MaskCardNumbersExample : IExample
             // TransformValues: the key can't change, so no repartitioning is needed downstream.
             // TransformerBuilder.New<K, V, K1, V1>() + .Transformer(func) wraps a lambda in a transformer.
             .TransformValues(TransformerBuilder.New<string, string, string, string>()
-                // The returned record replaces the current one. Pass record.Headers along to keep the headers:
-                // a record created without headers clears them.
-                .Transformer(record => Record<string, string>.Create(Mask(record.Value), record.Headers))
+                // The returned record replaces the current one. A record created without headers keeps the
+                // headers of the current record (pass headers to Create to replace them).
+                .Transformer(record => Record<string, string>.Create(Mask(record.Value)))
                 .Build())
             .To(OutputTopic);
     }
@@ -92,7 +92,7 @@ public class CountryKeyTransformer : ITransformer<string, string, string, string
     public Record<string, string> Process(Record<string, string> record)
     {
         var parts = record.Value.Split(';');
-        return Record<string, string>.Create(parts[0], $"{record.Key}:{parts[1]}", record.Headers);
+        return Record<string, string>.Create(parts[0], $"{record.Key}:{parts[1]}");
     }
 
     public void Close()
