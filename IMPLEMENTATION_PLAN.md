@@ -482,17 +482,17 @@ These appear in `roadmap.md` as one-liners. No code exists for any of them. A sh
 
 Writing the `examples/` folder, which has 142 tests across 13 groups, turned up the issues below. None were worked around silently: each is noted in the README of the example that hit it.
 
-**Bugs:**
+**Bugs (all fixed, each with a regression test that fails on the old code):**
 
-| Issue | Where |
+| Issue | Fix |
 |---|---|
-| `TopologyTestDriver.AdvanceWallClockTime` overshoots: each loop in which a punctuation fires moves the clock another tenth of the advance | `core/Mock/TaskSynchronousTopologyDriver.cs` |
-| The default test driver creates every topic with 1 partition, so `Repartition` with more than 1 partition fails (after about 48 s of retries) | `core/Mock/Sync/SyncAdminClient.CreateTopicsAsync` |
-| `TestOutputTopic.IsEmpty` and `QueueSize` throw in the default test driver mode (`SYNC_TASK`) | `core/Mock/TestOutputTopic.cs` |
-| A transformer returning `Record.Create(key, value)` clears the input record's headers | `KStreamTransformer` / `Record.Create` |
-| `config.Logger` becomes a process-wide static logger factory; disposing it breaks every later stream in the process | `core/Crosscutting/Logger.cs` |
-| `RetryPolicy.NumberOfRetry(n)` counts attempts, not retries (`0` never calls the function) | `AbstractAsyncProcessor` |
-| The `DeserializationExceptionHandler` is called twice per bad record (already known) | `RecordQueue` |
+| `TopologyTestDriver.AdvanceWallClockTime` overshot whenever a punctuation fired | The clock moves by exactly the given duration, and each due punctuation fires once per advance, as in Kafka. |
+| The default test driver created every topic with 1 partition, so `Repartition` with more than 1 partition failed | The sync admin client honours `NumPartitions` and reports the declared partition count. |
+| `TestOutputTopic.IsEmpty` / `QueueSize` threw in `SYNC_TASK` mode | Implemented for the sync mode. |
+| A transformer returning `Record.Create(key, value)` cleared the input headers | A record created without headers keeps the input headers; headers passed to `Create` still replace them. |
+| Disposing the `config.Logger` factory broke every later stream in the process | The previous factory is restored when a stream or driver is disposed, and a disposed factory falls back to the default one. |
+| `RetryPolicy.NumberOfRetry(n)` counted attempts | It now means n retries after the first attempt. **Behaviour change:** one more call than before. |
+| The `DeserializationExceptionHandler` was called twice per bad record | The timestamp-extraction path no longer calls the handler, and doesn't deserialize at all for the built-in extractors. |
 
 **Behaviour difference from Kafka:** left and outer stream-stream joins emit an unmatched record as soon as it arrives, with null for the other side. Kafka 3.x waits until the join window closes.
 
