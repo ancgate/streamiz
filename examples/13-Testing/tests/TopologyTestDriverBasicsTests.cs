@@ -27,9 +27,9 @@ public class TopologyTestDriverBasicsTests
         Assert.AreEqual("o-1", record.Message.Key);
         Assert.AreEqual("2 COFFEES", record.Message.Value);
         // everything was read, and nothing went to the other topic
-        // (IsEmpty and QueueSize only work in ASYNC_CLUSTER_IN_MEMORY mode: read the list instead)
-        CollectionAssert.IsEmpty(standard.ReadValueList());
-        CollectionAssert.IsEmpty(express.ReadValueList());
+        Assert.IsTrue(standard.IsEmpty);
+        Assert.IsTrue(express.IsEmpty);
+        Assert.AreEqual(0, express.QueueSize);
     }
 
     [Test]

@@ -48,9 +48,8 @@ public class ExplicitRepartitionTests
     [Test]
     public void OrdersAreRekeyedByCustomerThroughANamedRepartitionTopic()
     {
-        // The TopologyTestDriver's mock cluster creates every topic with 1 partition, so a repartition topic
-        // declared with more partitions fails its partition check: the test uses 1 partition.
-        var example = new ExplicitRepartition(partitions: 1);
+        // The repartition topic is created with the 4 partitions declared by the example.
+        var example = new ExplicitRepartition();
         using var driver = Create(example);
         var orders = driver.CreateInputTopic(ExplicitRepartition.InputTopic, new StringSerDes(), new JsonSerDes<Order>());
         var output = driver.CreateOutputTopic(ExplicitRepartition.OutputTopic, TimeSpan.FromSeconds(1),

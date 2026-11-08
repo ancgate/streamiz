@@ -218,9 +218,6 @@ dotnet run -- explicit-repartition
 | `o1` → alice, 2 × book | `alice` → 2 x book |
 | `o2` → bob, 1 × pen | `bob` → 1 x pen |
 
-The test uses 1 partition: the `TopologyTestDriver`'s mock cluster creates every topic with one partition, and
-rejects a repartition topic declared with more.
-
 ## drop-duplicates
 
 [`DropDuplicates.cs`](src/Examples/DropDuplicates.cs): `DropDuplicate` drops a record when a record of the same key

@@ -77,7 +77,7 @@ Remember when each sensor was last heard of (wall-clock time) and, every 10 seco
 | 30s (punctuation) | | sensor-1 = `silent for 30s` |
 | 50s (punctuation) | | sensor-2 = `silent for 30s` |
 
-(In the tests, the exact seconds vary a little: the `TopologyTestDriver` moves its clock slightly further than asked when a punctuation runs.)
+(This table is a live run, where the punctuation runs every 10 seconds. In the tests, each `AdvanceWallClockTime` moves the clock by exactly the given duration and runs the due punctuation once, at the new time, as in Kafka's `TopologyTestDriver`: advancing by 20s, 20s, then 30s reports sensor-1 `silent for 40s` and sensor-2 `silent for 50s`.)
 
 ## Custom state store
 

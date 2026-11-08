@@ -52,26 +52,15 @@ public class SilentSensorAlertTests
 
         heartbeats.PipeInput("sensor-2", "ok");  // sensor-2 is still alive, sensor-1 isn't
 
-        // Note: when a punctuation runs, the driver moves its clock a little further than asked
-        // (a tenth of the advance), so the exact number of seconds in the alerts isn't asserted.
+        // Like Kafka's TopologyTestDriver, each AdvanceWallClockTime moves the clock by exactly the given
+        // duration and runs a due punctuation once, at the new time (missed 10s ticks aren't replayed).
+        // At +40s, sensor-1 (last heard of at 0s) has been silent for 40s.
         driver.AdvanceWallClockTime(TimeSpan.FromSeconds(20));
-        var alerts = output.ReadAll();
-        Assert.AreEqual(1, alerts.Count);
-        Assert.AreEqual("sensor-1", alerts[0].Key);
-        AssertSilentForAtLeast30Seconds(alerts[0].Value);
+        CollectionAssert.AreEqual(new[] { ("sensor-1", "silent for 40s") }, output.ReadAll());
 
         // Reported once: nothing more for sensor-1 until it sends a heartbeat again.
+        // At +70s, sensor-2 (last heard of at +20s) has been silent for 50s.
         driver.AdvanceWallClockTime(TimeSpan.FromSeconds(30));
-        alerts = output.ReadAll();
-        Assert.AreEqual(1, alerts.Count);
-        Assert.AreEqual("sensor-2", alerts[0].Key);
-        AssertSilentForAtLeast30Seconds(alerts[0].Value);
-    }
-
-    private static void AssertSilentForAtLeast30Seconds(string alert)
-    {
-        StringAssert.StartsWith("silent for ", alert);
-        var seconds = int.Parse(alert["silent for ".Length..].TrimEnd('s'));
-        Assert.GreaterOrEqual(seconds, 30);
+        CollectionAssert.AreEqual(new[] { ("sensor-2", "silent for 50s") }, output.ReadAll());
     }
 }

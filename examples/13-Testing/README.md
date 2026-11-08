@@ -48,7 +48,8 @@ Assert.AreEqual("2 COFFEES", standard.ReadKeyValue().Message.Value);
 
 ## Pitfalls
 
-- `TestOutputTopic.IsEmpty` and `QueueSize` throw `InvalidOperationException` in `SYNC_TASK` mode. Assert on `ReadValueList()` / `ReadKeyValueList()` instead.
+- `TestOutputTopic.IsEmpty` and `QueueSize` count the records not read yet by this output topic: check them before reading if you need to know what's pending, since reading consumes the records.
+- `AdvanceWallClockTime(d)` moves the wall clock by exactly `d` and runs each due processing-time punctuation once, at the new time: advancing by 3.5 intervals runs a punctuation once, not three times (as in Kafka's `TopologyTestDriver`).
 - Use a unique `ApplicationId` per test, so tests don't share state directories.
 - Reading a topic consumes it: a second `ReadValueList()` only returns the records produced since the first one.
 - Without an exception handler, an exception thrown by the topology is thrown by `PipeInput` in `SYNC_TASK` mode: `Assert.Throws<...>(() => input.PipeInput(...))`.

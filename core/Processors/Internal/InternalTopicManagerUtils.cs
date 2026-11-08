@@ -219,13 +219,23 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             if (globalTopo != null)
                 sourceTopics.AddRange(globalTopo.StoresToTopics.Values);
 
+            // repartition topics with an explicit number of partitions (Repartitioned.WithNumberOfPartitions) are
+            // created with it: the in-memory admin clients create a topic with 1 partition when its metadata is read,
+            // so the internal topic manager would otherwise find 1 partition instead of the expected number
+            var explicitRepartitionTopics = builder.MakeInternalTopicGroups().Values
+                .SelectMany(t => t.RepartitionTopics)
+                .Where(t => t.Value.NumberPartitions > 0)
+                .GroupBy(t => t.Key)
+                .ToDictionary(g => g.Key, g => g.First().Value.NumberPartitions);
+
+            var topicsToCreate = sourceTopics
+                .Where(s => !explicitRepartitionTopics.ContainsKey(s))
+                .Select(s => new TopicSpecification {Name = s, NumPartitions = -1})
+                .Concat(explicitRepartitionTopics.Select(t => new TopicSpecification {Name = t.Key, NumPartitions = t.Value}));
+
             supplier
                 .GetAdmin(adminConfig)
-                .CreateTopicsAsync(sourceTopics.Select(s => new TopicSpecification()
-                {
-                    Name = s,
-                    NumPartitions = -1
-                })).GetAwaiter().GetResult();
+                .CreateTopicsAsync(topicsToCreate).GetAwaiter().GetResult();
 
             return this;
         }

@@ -365,27 +365,30 @@ namespace Streamiz.Kafka.Net.Mock
 
         public void AdvanceWallClockTime(TimeSpan advance)
         {
-            // Advance the mock wall clock once at the beginning
+            // Like Kafka's TopologyTestDriver.advanceWallClockTime: the mock wall clock moves by exactly
+            // `advance`, each processing-time punctuation which is due at the new time fires once (missed
+            // intervals are not caught up, as in Kafka), and the records written to internal topics
+            // (repartition topics...) are processed by their downstream tasks.
             wallClockTimeProvider.Advance(advance);
 
-            // Get all topics used for internal communication within the topology
             var internalTopics = GetAllInternalCommunicationTopics();
 
-            // Process until no more progress (like Java's completeAllProcessableWork)
-            // We advance time incrementally inside the loop to allow downstream buffers to flush.
-            // This is needed because buffers schedule punctuations relative to current time,
-            // so buffers created during forwarding need additional time to flush.
+            // Loop until nothing happens: forwarded records can reach tasks whose punctuations are due.
+            // The clock doesn't move, so each schedule fires at most once and the loop ends.
             bool madeProgress;
             int iterations = 0;
-            const int maxIterations = 100; // Prevent infinite loops
+            const int maxIterations = 100; // safety net
             do
             {
                 madeProgress = false;
                 iterations++;
 
-                // 1. FIRST forward records from all internal topics to ensure buffers have data
-                // Keep forwarding until no more records found in any topic
-                bool forwardedAny = false;
+                foreach (var task in tasks.Values.ToList())
+                {
+                    if (task.PunctuateSystemTime())
+                        madeProgress = true;
+                }
+
                 bool forwardedThisPass;
                 do
                 {
@@ -396,41 +399,9 @@ namespace Streamiz.Kafka.Net.Mock
                         {
                             madeProgress = true;
                             forwardedThisPass = true;
-                            forwardedAny = true;
                         }
                     }
                 } while (forwardedThisPass);
-
-                // 2. THEN trigger PROCESSING_TIME punctuations for all tasks (including newly created ones)
-                bool punctuatedAny = false;
-                foreach (var task in tasks.Values)
-                {
-                    if (task.PunctuateSystemTime())
-                    {
-                        madeProgress = true;
-                        punctuatedAny = true;
-                    }
-                }
-
-                // 3. If we forwarded records but no punctuations fired, we need to advance
-                // time significantly so downstream buffers can flush. Use the full advance
-                // amount since buffer punctuations may be scheduled far apart.
-                // If punctuations fired or no records were forwarded, use a smaller increment.
-                if (madeProgress)
-                {
-                    if (forwardedAny && !punctuatedAny)
-                    {
-                        // Records went to downstream buffers but their punctuations didn't fire yet
-                        // Advance by full amount to ensure downstream punctuations can fire
-                        wallClockTimeProvider.Advance(advance);
-                    }
-                    else
-                    {
-                        // Normal progress - advance by small amount
-                        wallClockTimeProvider.Advance(TimeSpan.FromMilliseconds(advance.TotalMilliseconds / 10));
-                    }
-                }
-
             } while (madeProgress && iterations < maxIterations);
         }
 
