@@ -31,7 +31,7 @@ public class AuditSinkExample : IExample
                 (record, _) => auditLog.WriteAsync(record.Key, record.Value),
                 RetryPolicy.NewBuilder()
                     .RetriableException<TimeoutException>()
-                    .NumberOfRetry(5) // attempts in total
+                    .NumberOfRetry(5) // retries after the first call
                     .RetryBackOffMs(100)
                     .Build());
     }

@@ -405,7 +405,8 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             input.PipeInput("k1", "poison");
             input.PipeInput("k2", "ok");
 
-            Assert.AreEqual(3, calls);
+            // the first attempt + 3 retries
+            Assert.AreEqual(4, calls);
             CollectionAssert.AreEqual(new[] {"OK"}, output.ReadValueList().ToList());
             var dead = dlq.ReadKeyValueList().ToList();
             Assert.AreEqual(1, dead.Count);

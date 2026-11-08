@@ -43,7 +43,8 @@ namespace Streamiz.Kafka.Net.Stream
         }
 
         /// <summary>
-        /// Specify the maximum number of retry for one record.
+        /// Specify the maximum number of retries for one record, after the first attempt:
+        /// 0 calls the function once, with no retry; the default (5) calls it up to 6 times.
         /// Default: 5
         /// </summary>
         /// <param name="numberOfRetry">Maximum retry of one record</param>
@@ -171,7 +172,7 @@ namespace Streamiz.Kafka.Net.Stream
         public long RetryBackOffMs { get; }
         
         /// <summary>
-        /// Maximum number of retry
+        /// Maximum number of retries after the first attempt (0: one attempt, no retry)
         /// </summary>
         public int NumberOfRetry { get; }
         

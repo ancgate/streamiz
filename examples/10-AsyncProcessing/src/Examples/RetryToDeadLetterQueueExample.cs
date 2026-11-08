@@ -31,7 +31,7 @@ public class RetryToDeadLetterQueueExample : IExample
                 async (record, _) => $"{record.Value}:{await directory.GetCustomerNameAsync(record.Value)}",
                 RetryPolicy.NewBuilder()
                     .RetriableException<HttpRequestException>()
-                    .NumberOfRetry(2) // attempts in total, the first call included
+                    .NumberOfRetry(1) // retries after the first call: 2 calls in total
                     .RetryBackOffMs(10)
                     .RetryBehavior(EndRetryBehavior.SKIP) // skipped records go to the dead letter queue below
                     .Build())

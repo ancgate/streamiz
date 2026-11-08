@@ -11,6 +11,10 @@ Since `1.4.0` release, Streamiz release multiple asynchronous processors :
 
 These processors use the pattern request/reponse to satisfy the asynchronous request with some retry policy options.
 
+**Retry policy:** `NumberOfRetry(n)` is the number of retries after the first attempt. `0` calls the function once, with no retry; the default `5` calls it up to 6 times. This applies to both engines (V1 and V2).
+
+> **Behaviour change:** before this version, `NumberOfRetry(n)` counted the attempts, the first one included, so `NumberOfRetry(0)` never called the function. If you set `NumberOfRetry`, a failing record is now called once more than before.
+
 ## Example
 
 **Use case: Enrich data from a mongodb instance**

@@ -84,7 +84,7 @@ public class RetryToDeadLetterQueueExampleTests
         // the error is described in headers
         var exception = Encoding.UTF8.GetString(dead[0].Message.Headers.GetLastBytes("__streams.errors.exception"));
         StringAssert.Contains("NoneRetryableException", exception);
-        // NumberOfRetry is the total number of attempts, the first call included: 2 calls
+        // NumberOfRetry(1): the first call + 1 retry
         Assert.AreEqual(2, directory.CallsFor("c-broken"));
     }
 }

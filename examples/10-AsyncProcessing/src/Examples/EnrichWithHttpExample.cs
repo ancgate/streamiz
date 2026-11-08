@@ -40,7 +40,7 @@ public class EnrichWithHttpExample : IExample
                     // only these exceptions are retried; any other one fails the record at once
                     .RetriableException<HttpRequestException>()
                     .RetriableException<TaskCanceledException>() // the HttpClient timeout
-                    .NumberOfRetry(3) // attempts in total, the first call included (0 would never call the function)
+                    .NumberOfRetry(3) // retries after the first call (0: one call, no retry)
                     .RetryBackOffMs(200)
                     // when the retries are exhausted: SKIP drops the record (FAIL stops processing, BUFFERED keeps retrying)
                     .RetryBehavior(EndRetryBehavior.SKIP)

@@ -73,7 +73,8 @@ namespace Streamiz.Kafka.Net.Processors
 
                 context.CurrentCallEpoch = DateTime.Now.GetMilliseconds();
                 
-                if (context.RetryNumber == Policy.NumberOfRetry)
+                // NumberOfRetry retries after the first attempt (RetryNumber counts the attempts already made)
+                if (context.RetryNumber > Policy.NumberOfRetry)
                     throw new NoneRetryableException($"Number of retry exceeded", context.RetryNumber,  context.CurrentCallEpoch - startProcessing.GetMilliseconds(), null); 
                 
                 ++context.RetryNumber;
@@ -262,7 +263,8 @@ namespace Streamiz.Kafka.Net.Processors
 
                 context.CurrentCallEpoch = DateTime.Now.GetMilliseconds();
 
-                if (!unbounded && context.RetryNumber >= Policy.NumberOfRetry)
+                // NumberOfRetry retries after the first attempt (RetryNumber counts the attempts already made)
+                if (!unbounded && context.RetryNumber > Policy.NumberOfRetry)
                     throw new NoneRetryableException("Number of retry exceeded", context.RetryNumber,
                         context.CurrentCallEpoch - startProcessing, context.LastExceptions?.FirstOrDefault());
 

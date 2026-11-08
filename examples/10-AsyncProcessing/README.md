@@ -16,7 +16,7 @@ Docs: [async processing](../../docs/async-processing.md).
 ```csharp
 RetryPolicy.NewBuilder()
     .RetriableException<HttpRequestException>() // only these exceptions are retried (none by default)
-    .NumberOfRetry(3)                          // attempts in total, the first call included (default 5)
+    .NumberOfRetry(3)                          // retries after the first call (default 5, 0 = no retry)
     .RetryBackOffMs(200)                       // wait between attempts (default 100 ms)
     .TimeoutMs(10_000)                         // total time for one record (default max.poll.interval.ms / 3)
     .RetryBehavior(EndRetryBehavior.SKIP)      // when the attempts are exhausted (default SKIP)
