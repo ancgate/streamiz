@@ -57,6 +57,10 @@ Switch to `consumer`terminal and check aggregation result
 
 Read the full documentation on https://lgouellec.github.io/streamiz/
 
+# Examples
+
+The [examples](examples/README.md) folder has runnable examples for every feature, grouped by topic: stateless and stateful operations, windowing, joins, the Processor API, state stores and interactive queries, remote storage, error handling, processing guarantees, serdes, async processing, observability, hosting and testing. Each example comes with tests that show its exact input and output.
+
 # Installation
 
 Nuget packages are listed to [nuget.org](https://www.nuget.org/packages/Streamiz.Kafka.Net/)

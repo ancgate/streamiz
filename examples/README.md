@@ -59,3 +59,5 @@ examples/
     src/                         console application (one file per example)
     tests/                       TopologyTestDriver tests of every example
 ```
+
+`12-Hosting` is laid out differently: `src/Worker` (a Generic Host worker service) and `src/WebApi` (an ASP.NET Core app) share the topology and hosting code in `src/Shared`, and run with `dotnet run` in their own folder.

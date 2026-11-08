@@ -478,6 +478,42 @@ These appear in `roadmap.md` as one-liners. No code exists for any of them. A sh
 
 ---
 
+## Issues found while writing the examples
+
+Writing the `examples/` folder, which has 142 tests across 13 groups, turned up the issues below. None were worked around silently: each is noted in the README of the example that hit it.
+
+**Bugs:**
+
+| Issue | Where |
+|---|---|
+| `TopologyTestDriver.AdvanceWallClockTime` overshoots: each loop in which a punctuation fires moves the clock another tenth of the advance | `core/Mock/TaskSynchronousTopologyDriver.cs` |
+| The default test driver creates every topic with 1 partition, so `Repartition` with more than 1 partition fails (after about 48 s of retries) | `core/Mock/Sync/SyncAdminClient.CreateTopicsAsync` |
+| `TestOutputTopic.IsEmpty` and `QueueSize` throw in the default test driver mode (`SYNC_TASK`) | `core/Mock/TestOutputTopic.cs` |
+| A transformer returning `Record.Create(key, value)` clears the input record's headers | `KStreamTransformer` / `Record.Create` |
+| `config.Logger` becomes a process-wide static logger factory; disposing it breaks every later stream in the process | `core/Crosscutting/Logger.cs` |
+| `RetryPolicy.NumberOfRetry(n)` counts attempts, not retries (`0` never calls the function) | `AbstractAsyncProcessor` |
+| The `DeserializationExceptionHandler` is called twice per bad record (already known) | `RecordQueue` |
+
+**Behaviour difference from Kafka:** left and outer stream-stream joins emit an unmatched record as soon as it arrives, with null for the other side. Kafka 3.x waits until the join window closes.
+
+**API gaps:**
+- **Testing apps outside the library:**
+  - No public property for a `KafkaStream`'s current state; only the `StateChanged` event gives it.
+  - No public in-memory `IKafkaSupplier`, so a running `KafkaStream` can't be tested without Kafka.
+  - Metrics can't be checked in tests: the test driver doesn't expose them, the minimum interval is 30 s, and `Sensor` and `StreamMetric` have internal constructors.
+  - `KeyQueryMetadata` has an internal constructor, so users can't build one in their own tests.
+- **Custom stores:** `StateRestoreCallback`, which they need, lives in an `Internal` namespace.
+- **DSL ergonomics:**
+  - No `MapValues(Func<V, VR>)` overload.
+  - `GroupBy((k, v) => ...)` is ambiguous and needs the three-argument form.
+  - No `Split`/`Branched` API; only `Branch`, which returns an array.
+- **Naming:**
+  - The remote-storage config key constants are public but named like private fields (`regionCst`).
+  - Core's `JsonSerDes<T>` clashes with user serdes of the same name.
+- **`DropDuplicate`:** the interval is centred on the record (`interval/2` on each side), which should be documented.
+
+---
+
 ## Testing and development setup
 
 - The .NET 8 SDK is enough to build the whole solution (`dotnet build kafka-stream-net.sln`). In this environment it was installed with `apt-get install dotnet-sdk-8.0` (Ubuntu 24.04).
