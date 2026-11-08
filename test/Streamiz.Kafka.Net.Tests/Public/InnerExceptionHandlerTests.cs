@@ -12,6 +12,21 @@ namespace Streamiz.Kafka.Net.Tests.Public
 {
     public class InnerExceptionHandlerTests
     {
+        private class PoisonTimestampExtractor : ITimestampExtractor
+        {
+            public int PoisonCalls;
+
+            public long Extract(ConsumeResult<object, object> record, long partitionTime)
+            {
+                if ("poison".Equals(record.Message.Value))
+                {
+                    Interlocked.Increment(ref PoisonCalls);
+                    throw new InvalidOperationException("poison record");
+                }
+                return record.Message.Timestamp.UnixTimestampMs;
+            }
+        }
+
         private class FailTimestampExtractor : ITimestampExtractor
         {
             public long Extract(ConsumeResult<object, object> record, long partitionTime)
@@ -83,6 +98,99 @@ namespace Streamiz.Kafka.Net.Tests.Public
             }
 
             stream.Dispose();
+        }
+
+
+        private static List<string> RunPoisonRecordScenario(Action<StreamConfig> configure, Action<StreamBuilder> build)
+        {
+            var config = new StreamConfig<StringSerDes, StringSerDes>();
+            config.ApplicationId = $"test-poison-{Guid.NewGuid()}";
+            config.BootstrapServers = "127.0.0.1";
+            config.PollMs = 10;
+            config.CommitIntervalMs = 100;
+            configure(config);
+
+            var builder = new StreamBuilder();
+            build(builder);
+
+            using var driver = new TopologyTestDriver(builder.Build(), config, TopologyTestDriver.Mode.ASYNC_CLUSTER_IN_MEMORY);
+            var input = driver.CreateInputTopic<string, string>("test");
+            var output = driver.CreateOutputTopic<string, string>("output");
+            input.PipeInput("k1", "a");
+            input.PipeInput("k2", "poison");
+            input.PipeInput("k3", "b");
+
+            var values = new List<string>();
+            var end = DateTime.Now.AddSeconds(10);
+            while (!values.Contains("b") && DateTime.Now < end)
+            {
+                foreach (var r in output.ReadKeyValueList())
+                    values.Add(r.Message.Value);
+                Thread.Sleep(50);
+            }
+
+            // give the thread time to show whether it keeps replaying the poison record
+            Thread.Sleep(1000);
+            foreach (var r in output.ReadKeyValueList())
+                values.Add(r.Message.Value);
+            return values;
+        }
+
+        [Test]
+        public void InnerExceptionHandlerContinueSkipsRecordThatFailsInProcessor()
+        {
+            int poisonCalls = 0, handlerCalls = 0;
+
+            var values = RunPoisonRecordScenario(
+                config => config.InnerExceptionHandler = _ =>
+                {
+                    Interlocked.Increment(ref handlerCalls);
+                    return ExceptionHandlerResponse.CONTINUE;
+                },
+                builder => builder
+                    .Stream<string, string>("test")
+                    .Peek((_, v, _) =>
+                    {
+                        if (v == "poison")
+                        {
+                            Interlocked.Increment(ref poisonCalls);
+                            throw new InvalidOperationException("poison record");
+                        }
+                    })
+                    .To("output"));
+
+            CollectionAssert.Contains(values, "a");
+            CollectionAssert.Contains(values, "b");
+            CollectionAssert.DoesNotContain(values, "poison");
+            Assert.AreEqual(1, poisonCalls);
+            Assert.AreEqual(1, handlerCalls);
+        }
+
+        [Test]
+        public void InnerExceptionHandlerContinueSkipsRecordThatFailsInTimestampExtractor()
+        {
+            int handlerCalls = 0;
+            var extractor = new PoisonTimestampExtractor();
+
+            var values = RunPoisonRecordScenario(
+                config =>
+                {
+                    config.DefaultTimestampExtractor = extractor;
+                    config.InnerExceptionHandler = _ =>
+                    {
+                        Interlocked.Increment(ref handlerCalls);
+                        return ExceptionHandlerResponse.CONTINUE;
+                    };
+                },
+                builder => builder
+                    .Stream<string, string>("test")
+                    .To("output"));
+
+            CollectionAssert.Contains(values, "a");
+            CollectionAssert.Contains(values, "b");
+            CollectionAssert.DoesNotContain(values, "poison");
+            Assert.AreEqual(1, extractor.PoisonCalls);
+            Assert.AreEqual(1, handlerCalls);
         }
 
 

@@ -1,0 +1,49 @@
+{
+  "seed": 20260108,
+  "devices": 50,
+  "readings": 11841,
+  "from": "2026-01-05T08:00:00Z",
+  "to": "2026-01-05T12:00:00Z",
+  "readingIntervalSeconds": 60,
+  "spikes": [
+    {
+      "deviceId": "D07",
+      "measuredAt": "2026-01-05T09:30:07Z",
+      "delta": 15
+    },
+    {
+      "deviceId": "D07",
+      "measuredAt": "2026-01-05T09:31:07Z",
+      "delta": 15
+    },
+    {
+      "deviceId": "D07",
+      "measuredAt": "2026-01-05T09:32:07Z",
+      "delta": 15
+    },
+    {
+      "deviceId": "D23",
+      "measuredAt": "2026-01-05T10:30:23Z",
+      "delta": -12
+    }
+  ],
+  "silences": [
+    {
+      "deviceId": "D13",
+      "silentFrom": "2026-01-05T10:01:00Z"
+    },
+    {
+      "deviceId": "D31",
+      "silentFrom": "2026-01-05T09:00:00Z",
+      "silentUntil": "2026-01-05T09:40:00Z"
+    }
+  ],
+  "lateReadings": {
+    "deviceId": "D42",
+    "count": 10,
+    "measuredFrom": "2026-01-05T11:00:00Z",
+    "delayMinutes": 15
+  },
+  "outOfOrderReadings": 121,
+  "lowBatteryDevice": "D44"
+}

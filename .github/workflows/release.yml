@@ -52,5 +52,13 @@ jobs:
       run: dotnet pack metrics/Streamiz.Kafka.Net.Metrics.OpenTelemetry/Streamiz.Kafka.Net.Metrics.OpenTelemetry.csproj --configuration Release --no-build --no-restore
     - name: Pack Azure Remote Storage
       run: dotnet pack remote/Streamiz.Kafka.Net.Azure.RemoteStorage/Streamiz.Kafka.Net.Azure.RemoteStorage.csproj --configuration Release --no-build --no-restore
+    - name: Pack GCP Remote Storage
+      run: dotnet pack remote/Streamiz.Kafka.Net.Gcp.RemoteStorage/Streamiz.Kafka.Net.Gcp.RemoteStorage.csproj --configuration Release --no-build --no-restore
+    - name: Pack AWS Remote Storage
+      run: dotnet pack remote/Streamiz.Kafka.Net.Aws.RemoteStorage/Streamiz.Kafka.Net.Aws.RemoteStorage.csproj --configuration Release --no-build --no-restore
+    - name: Pack Azure Cosmos Remote Storage
+      run: dotnet pack remote/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage.csproj --configuration Release --no-build --no-restore
+    - name: Pack MongoDB Remote Storage
+      run: dotnet pack remote/Streamiz.Kafka.Net.MongoDb.RemoteStorage/Streamiz.Kafka.Net.MongoDb.RemoteStorage.csproj --configuration Release --no-build --no-restore
     - name: Publish in nuget.org
       run: dotnet nuget push **/*.nupkg -k ${{ secrets.NUGET_PACKAGE_TOKEN }} -s https://api.nuget.org/v3/index.json -n -d   

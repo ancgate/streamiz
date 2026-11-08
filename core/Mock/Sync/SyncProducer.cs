@@ -32,6 +32,10 @@ namespace Streamiz.Kafka.Net.Mock.Sync
         }
         private static readonly object _lock = new();
         private readonly Dictionary<string, List<Message<byte[], byte[]>>> topics = new();
+        // number of partitions declared for each topic. The synchronous driver keeps one log per topic
+        // (its task processes all the records of a topic), but reports this count in the metadata, so
+        // topics created with several partitions (e.g. Repartitioned.WithNumberOfPartitions) are valid.
+        private readonly Dictionary<string, int> partitionCounts = new();
         private SyncTransaction transaction;
         private ProducerConfig config;
         
@@ -44,14 +48,23 @@ namespace Streamiz.Kafka.Net.Mock.Sync
         }
 
 
-        internal void CreateTopic(string topicName)
+        internal void CreateTopic(string topicName, int numberPartitions = 1)
         {
             lock (_lock)
             {
                 if (!topics.ContainsKey(topicName))
                 {
                     topics.Add(topicName, new List<Message<byte[], byte[]>>());
+                    partitionCounts[topicName] = Math.Max(1, numberPartitions);
                 }
+            }
+        }
+
+        internal int GetPartitionCount(string topicName)
+        {
+            lock (_lock)
+            {
+                return partitionCounts.TryGetValue(topicName, out var count) ? count : 1;
             }
         }
         
@@ -60,6 +73,7 @@ namespace Streamiz.Kafka.Net.Mock.Sync
             lock (_lock)
             {
                 topics.Remove(topicName);
+                partitionCounts.Remove(topicName);
             }
         }
 

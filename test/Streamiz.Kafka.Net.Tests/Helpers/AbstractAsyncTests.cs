@@ -15,7 +15,12 @@ namespace Streamiz.Kafka.Net.Tests.Helpers
         {
             this.applicationId = applicationId;
         }
-        
+
+        /// <summary>
+        /// Async processing engine used by the tests (the V2 test classes override it)
+        /// </summary>
+        protected virtual AsyncProcessingMode AsyncMode => AsyncProcessingMode.V1;
+
         protected TopologyTestDriver BuildTopology(Action<StreamBuilder> funcBuilder, TopologyTestDriver.Mode mode = TopologyTestDriver.Mode.SYNC_TASK, Action<StreamConfig> configAction = null)
         {
             var config = new StreamConfig<StringSerDes, StringSerDes>();
@@ -25,6 +30,7 @@ namespace Streamiz.Kafka.Net.Tests.Helpers
             config.MaxPollRecords = 10;
             config.CommitIntervalMs = 100;
             config.MetricsRecording = MetricsRecordingLevel.INFO;
+            config.AsyncProcessingMode = AsyncMode;
             configAction?.Invoke(config);
             
             var builder = new StreamBuilder();

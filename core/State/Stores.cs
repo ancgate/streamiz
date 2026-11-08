@@ -83,6 +83,96 @@ namespace Streamiz.Kafka.Net.State
             => new WindowStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
 
         /// <summary>
+        /// Create a default (persistent, RocksDB) <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier DefaultSessionStore(string name, TimeSpan retention)
+            => PersistentSessionStore(name, retention);
+
+        /// <summary>
+        /// Create a persistent (RocksDB) <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier PersistentSessionStore(string name, TimeSpan retention)
+        {
+            if (retention < TimeSpan.Zero)
+                throw new ArgumentException("retention cannot be negative");
+            return new RocksDbSessionBytesStoreSupplier(name, retention);
+        }
+
+        /// <summary>
+        /// Create an in-memory <see cref="ISessionBytesStoreSupplier"/>.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="retention">length of time to retain data in the store (cannot be negative); it must be at least the inactivity gap plus the grace period</param>
+        /// <returns>an instance of a <see cref="ISessionBytesStoreSupplier"/></returns>
+        public static ISessionBytesStoreSupplier InMemorySessionStore(string name, TimeSpan retention)
+        {
+            if (retention < TimeSpan.Zero)
+                throw new ArgumentException("retention cannot be negative");
+            return new InMemorySessionBytesStoreSupplier(name, retention);
+        }
+
+        /// <summary>
+        /// Creates a <see cref="IStoreBuilder{T}"/> that can be used to build a <see cref="ISessionStore{K, AGG}"/>.
+        /// </summary>
+        /// <param name="supplier">a <see cref="ISessionBytesStoreSupplier"/> (cannot be null)</param>
+        /// <param name="keySerdes">the key serde to use</param>
+        /// <param name="valueSerdes">the aggregate serde to use</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <returns>an instance of <see cref="IStoreBuilder{T}"/> than can build a <see cref="ISessionStore{K, AGG}"/></returns>
+        public static IStoreBuilder<ISessionStore<K, V>> SessionStoreBuilder<K, V>(ISessionBytesStoreSupplier supplier, ISerDes<K> keySerdes, ISerDes<V> valueSerdes)
+            => new SessionStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
+
+        /// <summary>
+        /// Create a persistent (RocksDB) <see cref="IVersionedBytesStoreSupplier"/> (KIP-889).
+        /// Pass it to <c>Materialized.Create(...)</c> to materialize a source KTable as a versioned store.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="historyRetention">how long the older versions are kept (cannot be negative); it's also the grace period:
+        /// records older than stream time minus the history retention are not put</param>
+        /// <param name="segmentInterval">size of the segments of older versions, in milliseconds (default: max(history retention / 3, 2 seconds))</param>
+        /// <returns>an instance of a <see cref="IVersionedBytesStoreSupplier"/></returns>
+        public static IVersionedBytesStoreSupplier PersistentVersionedKeyValueStore(string name, TimeSpan historyRetention, long? segmentInterval = null)
+        {
+            if (historyRetention < TimeSpan.Zero)
+                throw new ArgumentException("historyRetention cannot be negative");
+            return new RocksDbVersionedKeyValueBytesStoreSupplier(name, historyRetention, segmentInterval);
+        }
+
+        /// <summary>
+        /// Create an in-memory <see cref="IVersionedBytesStoreSupplier"/> (KIP-889).
+        /// Pass it to <c>Materialized.Create(...)</c> to materialize a source KTable as a versioned store.
+        /// </summary>
+        /// <param name="name">name of the store (cannot be null)</param>
+        /// <param name="historyRetention">how long the older versions are kept (cannot be negative); it's also the grace period:
+        /// records older than stream time minus the history retention are not put</param>
+        /// <returns>an instance of a <see cref="IVersionedBytesStoreSupplier"/></returns>
+        public static IVersionedBytesStoreSupplier InMemoryVersionedKeyValueStore(string name, TimeSpan historyRetention)
+        {
+            if (historyRetention < TimeSpan.Zero)
+                throw new ArgumentException("historyRetention cannot be negative");
+            return new InMemoryVersionedKeyValueBytesStoreSupplier(name, historyRetention);
+        }
+
+        /// <summary>
+        /// Creates a <see cref="IStoreBuilder{T}"/> that can be used to build a <see cref="IVersionedKeyValueStore{K, V}"/>.
+        /// </summary>
+        /// <param name="supplier">a <see cref="IVersionedBytesStoreSupplier"/> (cannot be null)</param>
+        /// <param name="keySerdes">the key serde to use</param>
+        /// <param name="valueSerdes">the value serde to use</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">value type</typeparam>
+        /// <returns>an instance of <see cref="IStoreBuilder{T}"/> than can build a <see cref="IVersionedKeyValueStore{K, V}"/></returns>
+        public static IStoreBuilder<IVersionedKeyValueStore<K, V>> VersionedKeyValueStoreBuilder<K, V>(IVersionedBytesStoreSupplier supplier, ISerDes<K> keySerdes, ISerDes<V> valueSerdes)
+            => new VersionedKeyValueStoreBuilder<K, V>(supplier, keySerdes, valueSerdes);
+
+        /// <summary>
         /// Creates a <see cref="IStoreBuilder"/> that can be used to build a <see cref="ITimestampedKeyValueStore{K, V}"/>.
         /// </summary>
         /// <param name="supplier">a <see cref="IKeyValueBytesStoreSupplier"/> (cannot be null)</param>

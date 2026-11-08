@@ -12,6 +12,7 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
             private ISerDes<TV> ValueSerdes { get; }
             private string SinkName { get; }
             private string RepartitionTopic { get; }
+            private string AsyncProcessorName { get; }
 
             public AsyncNodeRequest(
                 string streamGraphNode,
@@ -19,9 +20,11 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
                 ISerDes<TK> keySerdes,
                 ISerDes<TV> valueSerdes,
                 string sinkName,
-                string repartitionTopic)
+                string repartitionTopic,
+                string asyncProcessorName)
                 : base(streamGraphNode)
             {
+                AsyncProcessorName = asyncProcessorName;
                 SourceName = sourceName;
                 KeySerdes = keySerdes;
                 ValueSerdes = valueSerdes;
@@ -43,6 +46,7 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
                     SourceName,
                     new ConsumedInternal<TK, TV>(SourceName, KeySerdes, ValueSerdes, new FailOnInvalidTimestamp()),
                     true);
+                builder.RegisterAsyncRequest(SinkName, SourceName, AsyncProcessorName, RepartitionTopic);
             }
         }
 
@@ -124,6 +128,7 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
                     new ConsumedInternal<TK, TV>(SourceName, KeySerdes, ValueSerdes, new FailOnInvalidTimestamp()),
                     true);
                 builder.AddProcessor(ProcessorParameters.ProcessorName, ProcessorParameters.Processor, SourceName);
+                builder.RegisterAsyncRequest(SinkName, SourceName, ProcessorParameters.ProcessorName, RequestTopic);
             }
         }
         
@@ -146,7 +151,8 @@ namespace Streamiz.Kafka.Net.Stream.Internal.Graph.Nodes
                 requestSerDes.RequestKeySerDes,
                 requestSerDes.RequestValueSerDes,
                 requestSinkProcessorName,
-                requestTopicName);
+                requestTopicName,
+                processorParameters.ProcessorName);
 
             ResponseNode = new AsyncNodeResponse<K,V,K1,V1>(
                 responseSourceProcessorName,

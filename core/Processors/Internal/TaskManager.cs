@@ -44,7 +44,50 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         public StreamsProducer Producer { get; }
         public IEnumerable<TaskId> ActiveTaskIds => activeTasks.Keys;
         public bool RebalanceInProgress { get; internal set; }
+
+        /// <summary>
+        /// True if a task has async calls in progress or results to handle (AsyncProcessingMode.V2)
+        /// </summary>
+        internal bool HasAsyncWork => activeTasks.Values.Any(t => t.HasAsyncWork);
+
+        // tasks whose partitions are paused because an async processor is saturated (AsyncProcessingMode.V2)
+        private readonly HashSet<TaskId> asyncPausedTasks = new();
+
+        /// <summary>
+        /// Back-pressure of the async processors (AsyncProcessingMode.V2) : pause the partitions of a task when one of its
+        /// async processors reached its max concurrency, so the records are not buffered in memory without limit, and resume
+        /// them when the async processors are at most half full.
+        /// </summary>
+        internal void PauseOrResumeAsyncSaturatedTasks()
+        {
+            asyncPausedTasks.RemoveWhere(id => !activeTasks.ContainsKey(id));
+            if (Consumer == null)
+                return;
+
+            foreach (var task in activeTasks.Values)
+            {
+                if (asyncPausedTasks.Contains(task.Id))
+                {
+                    if (task.AsyncCanResume)
+                    {
+                        Consumer.Resume(task.Partition);
+                        asyncPausedTasks.Remove(task.Id);
+                    }
+                }
+                else if (task.AsyncSaturated)
+                {
+                    log.LogDebug("Pause the partitions of the task {TaskId} : an async processor reached its max concurrency", task.Id);
+                    Consumer.Pause(task.Partition);
+                    asyncPausedTasks.Add(task.Id);
+                }
+            }
+        }
         internal readonly object _lock = new object();
+
+        /// <summary>
+        /// Standby replicas of this instance (num.standby.replicas &gt; 0) : told when tasks become active here or are closed
+        /// </summary>
+        internal IStandbyTasksListener StandbyTasks { get; set; }
 
         internal TaskManager(InternalTopologyBuilder builder, TaskCreator taskCreator, IAdminClient adminClient,
             IChangelogReader changelogReader, StreamsProducer producer)
@@ -85,6 +128,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
             if (tasksToBeCreated.Count > 0)
             {
+                // a standby replica of these tasks is closed first : the active tasks reuse its stores and checkpoint
+                StandbyTasks?.BeforeActiveTasksCreated(tasksToBeCreated.Keys.ToList());
                 var tasks = taskCreator.CreateTasks(Consumer, Producer, tasksToBeCreated);
                 foreach (var task in tasks)
                 {
@@ -121,7 +166,11 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             }
 
             foreach (var rvTask in revokedTask)
+            {
+                // the async calls in progress complete before the commit (AsyncProcessingMode.V2)
+                rvTask.CompleteAsyncProcessing();
                 consumedOffsetsToCommit.AddRange(rvTask.PrepareCommit());
+            }
 
             if (consumedOffsetsToCommit.Any())
             {
@@ -137,6 +186,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 rvTask.Suspend();
                 rvTask.Close(false);
             }
+
+            StandbyTasks?.ActiveTasksClosed(revokedTask.Select(t => t.Id).ToList());
             
             foreach(var acT in commitNeededActiveTask)
                 acT.PostCommit(false);
@@ -165,6 +216,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             foreach (var t in activeTasks)
             {
                 CurrentTask = t.Value;
+                // the async calls in progress complete before the commit (AsyncProcessingMode.V2)
+                t.Value.CompleteAsyncProcessing();
                 consumedOffsets.AddRange(t.Value.PrepareCommit());
             }
 
@@ -182,6 +235,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             
             Producer.Dispose();
 
+            StandbyTasks?.ActiveTasksClosed(activeTasks.Keys.ToList());
             activeTasks.Clear();
             CurrentTask = null;
             
@@ -263,6 +317,34 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     Producer.CommitTransaction(offsetsToCommit, Consumer.ConsumerGroupMetadata);
                 }
             }
+            // AT_MOST_ONCE : nothing to commit, offsets are committed when the records are polled (see CommitPolledOffsets),
+            // committing the processed offsets here would move them backwards
+        }
+
+        /// <summary>
+        /// At-most-once : commit the position after the polled records, before they are processed.
+        /// Only the partitions owned by an active task are committed.
+        /// </summary>
+        internal void CommitPolledOffsets(IEnumerable<ConsumeResult<byte[], byte[]>> records)
+        {
+            var offsets = records
+                .GroupBy(r => r.TopicPartition)
+                .Where(g => ActiveTaskFor(g.Key) != null)
+                .Select(g => new TopicPartitionOffset(g.Key, g.Max(r => r.Offset.Value) + 1))
+                .ToList();
+
+            if (!offsets.Any())
+                return;
+
+            try
+            {
+                Consumer.Commit(offsets);
+            }
+            catch (KafkaException kafkaException)
+            {
+                throw new TaskMigratedException(
+                    $"Consumer committing offsets failed, indicating the corresponding thread is no longer part of the group : {kafkaException.Message}");
+            }
         }
 
         internal int Process(long now)
@@ -276,6 +358,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     try
                     {
                         CurrentTask = task;
+                        // results of the async calls (AsyncProcessingMode.V2) completed since the last iteration
+                        processed += task.DrainAsyncCompletions();
                         if (task.CanProcess(now) && task.Process())
                         {
                             processed++;
@@ -331,6 +415,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         {
             log.LogDebug("Closing lost active tasks as zombies");
             CurrentTask = null;
+            asyncPausedTasks.Clear();
 
             if (Producer.EosEnabled)
                 Producer.AbortTransaction();
@@ -339,6 +424,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             while (enumerator.MoveNext())
             {
                 var task = enumerator.Current.Value;
+                // the results of the async calls in progress are ignored, their records will be processed again
+                task.CancelAsyncProcessing();
                 task.PrepareCommit();
                 task.Suspend();
                 task.PostCommit(true);
@@ -349,6 +436,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     partitionsToTaskId.TryRemove(part, out TaskId taskId);
                 }
             }
+            StandbyTasks?.ActiveTasksClosed(activeTasks.Keys.ToList());
             activeTasks.Clear();
             
             if (Producer.EosEnabled)

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Streamiz.Examples.Common\Streamiz.Examples.Common.csproj" />
+    <ProjectReference Include="..\..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Json\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Json.csproj" />
+    <ProjectReference Include="..\..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Avro\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Avro.csproj" />
+    <ProjectReference Include="..\..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Protobuf\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Protobuf.csproj" />
+    <ProjectReference Include="..\..\..\serdes\Streamiz.Kafka.Net.SerDes.CloudEvents\Streamiz.Kafka.Net.SerDes.CloudEvents.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- compiles Protos/*.proto into C# classes at build time -->
+    <PackageReference Include="Grpc.Tools" Version="2.67.0" PrivateAssets="All" />
+    <Protobuf Include="Protos\customer.proto" GrpcServices="None" />
+  </ItemGroup>
+
+</Project>

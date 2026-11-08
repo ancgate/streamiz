@@ -4,10 +4,10 @@ namespace Streamiz.Kafka.Net.Table.Internal
 {
     internal class KTableSourceValueGetterSupplier<K, V> : IKTableValueGetterSupplier<K, V>
     {
-        internal class KTableSourceValueGetter : IKTableValueGetter<K, V>
+        internal class KTableSourceValueGetter : IKTableVersionedValueGetter<K, V>
         {
             private readonly string storeName;
-            private ITimestampedKeyValueStore<K, V> store;
+            private KeyValueStoreWrapper<K, V> store;
 
             public KTableSourceValueGetter(string storeName)
             {
@@ -18,9 +18,13 @@ namespace Streamiz.Kafka.Net.Table.Internal
 
             public ValueAndTimestamp<V> Get(K key) => store.Get(key);
 
+            public bool IsVersioned => store.IsVersioned;
+
+            public ValueAndTimestamp<V> Get(K key, long asOfTimestamp) => store.Get(key, asOfTimestamp);
+
             public void Init(ProcessorContext context)
             {
-                store = (ITimestampedKeyValueStore<K, V>)context.GetStateStore(storeName);
+                store = new KeyValueStoreWrapper<K, V>(context, storeName);
             }
 
         }

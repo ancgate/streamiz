@@ -76,6 +76,31 @@ namespace Streamiz.Kafka.Net.Tests.Private
         }
 
         [Test]
+        public void ShouldNotFailWhenClosedBeforeTheThreadRuns()
+        {
+            var globalConsumerMock = new Mock<IConsumer<byte[], byte[]>>();
+            var globalStateMaintainerMock = new Mock<IGlobalStateMaintainer>();
+            var streamConfigMock = new Mock<IStreamConfig>();
+            streamConfigMock.Setup(x => x.PollMs).Returns(1);
+            streamConfigMock.Setup(x => x.CommitIntervalMs).Returns(1);
+            globalStateMaintainerMock.Setup(x => x.Initialize()).Returns(new Dictionary<TopicPartition, long>());
+
+            var globalStreamThread = new GlobalStreamThread("global", globalConsumerMock.Object, streamConfigMock.Object,
+                globalStateMaintainerMock.Object, new StreamMetricsRegistry());
+
+            // the interleaving of a stream closed right after it started: the shutdown begins before Run() executes
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var type = typeof(GlobalStreamThread);
+            type.GetField("stateConsumer", flags)!
+                .SetValue(globalStreamThread, type.GetMethod("InitializeStateConsumer", flags)!.Invoke(globalStreamThread, null));
+            type.GetMethod("SetState", flags)!.Invoke(globalStreamThread, new object[] {GlobalThreadState.PENDING_SHUTDOWN});
+
+            Assert.DoesNotThrow(() => type.GetMethod("Run", flags)!.Invoke(globalStreamThread, null));
+            Assert.AreEqual(GlobalThreadState.PENDING_SHUTDOWN, globalStreamThread.State);
+            globalStateMaintainerMock.Verify(x => x.Close(), Times.Once);
+        }
+
+        [Test]
         public void ShouldStopGlobalConsumer()
         {
             var globalConsumerMock = new Mock<IConsumer<byte[], byte[]>>();

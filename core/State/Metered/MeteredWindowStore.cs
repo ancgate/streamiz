@@ -19,7 +19,8 @@ namespace Streamiz.Kafka.Net.State.Metered
     internal class MeteredWindowStore<K, V> :
         WrappedStateStore<IWindowStore<Bytes, byte[]>>,
         IWindowStore<K, V>,
-        ICachedStateStore<Windowed<K>, V>
+        ICachedStateStore<Windowed<K>, V>,
+        IRestoreSensorStore
     {
         private readonly long windowSizeMs;
         protected ISerDes<K> keySerdes;
@@ -61,8 +62,12 @@ namespace Streamiz.Kafka.Net.State.Metered
             }
         }
         
+        public Sensor RestoreSensor { get; private set; }
+
         public override void Init(ProcessorContext context, IStateStore root)
         {
+            // before the inner stores are initialized: global stores are restored during their initialization
+            RestoreSensor = StateStoreMetrics.RestoreSensor(context.Id, metricScope, Name, context.Metrics);
             base.Init(context, root);
             InitStoreSerde(context);
             RegisterMetrics();

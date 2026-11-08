@@ -155,13 +155,39 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 return partitionCount;
             }
 
+            // the topic must have the same number of partitions as the given topics (e.g. foreign-key join subscriptions)
+            int? CopartitionedPartitionCount(InternalTopicConfig config)
+            {
+                if (config is not RepartitionTopicConfig { CopartitionedWithTopics: { Count: > 0 } } repartitionConfig)
+                    return null;
+
+                int? partitionCount = null;
+                foreach (var topic in repartitionConfig.CopartitionedWithTopics)
+                {
+                    int? count = null;
+                    if (repartitionTopics.TryGetValue(topic, out var internalTopic) && internalTopic.NumberPartitions > 0)
+                        count = internalTopic.NumberPartitions;
+                    else
+                    {
+                        var clusterMetadata = topicManager.AdminClient.GetMetadata(topic, TimeSpan.FromSeconds(10));
+                        count = clusterMetadata.PartitionCountForTopic(topic) ?? ComputePartitionCount(topic);
+                    }
+
+                    if (count.HasValue && (partitionCount == null || count > partitionCount))
+                        partitionCount = count;
+                }
+
+                return partitionCount;
+            }
+
             #endregion
 
             foreach (var repartitionTopic in repartitionTopics)
             {
                 if (repartitionTopic.Value.NumberPartitions == 0)
                 {
-                    var numberPartition = ComputePartitionCount(repartitionTopic.Key);
+                    var numberPartition = CopartitionedPartitionCount(repartitionTopic.Value) ??
+                                          ComputePartitionCount(repartitionTopic.Key);
                     if (!numberPartition.HasValue)
                     {
                         log.LogWarning(
@@ -193,13 +219,23 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             if (globalTopo != null)
                 sourceTopics.AddRange(globalTopo.StoresToTopics.Values);
 
+            // repartition topics with an explicit number of partitions (Repartitioned.WithNumberOfPartitions) are
+            // created with it: the in-memory admin clients create a topic with 1 partition when its metadata is read,
+            // so the internal topic manager would otherwise find 1 partition instead of the expected number
+            var explicitRepartitionTopics = builder.MakeInternalTopicGroups().Values
+                .SelectMany(t => t.RepartitionTopics)
+                .Where(t => t.Value.NumberPartitions > 0)
+                .GroupBy(t => t.Key)
+                .ToDictionary(g => g.Key, g => g.First().Value.NumberPartitions);
+
+            var topicsToCreate = sourceTopics
+                .Where(s => !explicitRepartitionTopics.ContainsKey(s))
+                .Select(s => new TopicSpecification {Name = s, NumPartitions = -1})
+                .Concat(explicitRepartitionTopics.Select(t => new TopicSpecification {Name = t.Key, NumPartitions = t.Value}));
+
             supplier
                 .GetAdmin(adminConfig)
-                .CreateTopicsAsync(sourceTopics.Select(s => new TopicSpecification()
-                {
-                    Name = s,
-                    NumPartitions = -1
-                })).GetAwaiter().GetResult();
+                .CreateTopicsAsync(topicsToCreate).GetAwaiter().GetResult();
 
             return this;
         }

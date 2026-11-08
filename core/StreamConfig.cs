@@ -18,6 +18,22 @@ using Streamiz.Kafka.Net.Table;
 namespace Streamiz.Kafka.Net
 {
     /// <summary>
+    /// Engine of the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+    /// </summary>
+    public enum AsyncProcessingMode
+    {
+        /// <summary>
+        /// Records go through an internal request topic and are processed one by one by a dedicated external stream thread.
+        /// </summary>
+        V1,
+        /// <summary>
+        /// Records are processed inside the stream task, without the request topic and the external thread:
+        /// concurrently for different keys, in order for a same key.
+        /// </summary>
+        V2
+    }
+
+    /// <summary>
     /// Processing Guarantee enumeration used in <see cref="IStreamConfig.Guarantee"/>
     /// </summary>
     public enum ProcessingGuarantee
@@ -29,7 +45,14 @@ namespace Streamiz.Kafka.Net
         /// <summary>
         /// Config value for parameter <see cref="IStreamConfig.Guarantee"/> for exactly-once processing guarantees.
         /// </summary>
-        EXACTLY_ONCE
+        EXACTLY_ONCE,
+        /// <summary>
+        /// Config value for parameter <see cref="IStreamConfig.Guarantee"/> for at-most-once processing guarantees.
+        /// The consumed offsets are committed right after each poll, before the records are processed: a record is never
+        /// processed twice, but the records polled and not processed yet are lost if the application crashes.
+        /// The producer doesn't retry (see <see cref="StreamConfig.MessageSendMaxRetries"/>), so an output record is not written twice.
+        /// </summary>
+        AT_MOST_ONCE
     }
 
     /// <summary>
@@ -172,6 +195,10 @@ namespace Streamiz.Kafka.Net
 
         /// <summary>
         /// Inner exception handling function called during processing.
+        /// Return <see cref="ExceptionHandlerResponse.FAIL"/> to stop the stream thread, or
+        /// <see cref="ExceptionHandlerResponse.CONTINUE"/> to close the tasks, rejoin the consumer group and keep processing.
+        /// With CONTINUE, a source record that failed in a processor or in the timestamp extractor is skipped
+        /// when it is consumed again, so it is not processed in an endless loop.
         /// </summary>
         Func<Exception, ExceptionHandlerResponse> InnerExceptionHandler { get; set; }
 
@@ -184,6 +211,33 @@ namespace Streamiz.Kafka.Net
         /// Production exception handling function called when kafka produce exception is raise.
         /// </summary>
         Func<DeliveryReport<byte[], byte[]>, ProductionExceptionHandlerResponse> ProductionExceptionHandler { get; set; }
+
+        /// <summary>
+        /// Exception handling function called when a processor (or a user function of the DSL) throws an exception
+        /// while processing one record (KIP-1033).
+        /// Return <see cref="ExceptionHandlerResponse.CONTINUE"/> to skip the record and keep processing the next records,
+        /// or <see cref="ExceptionHandlerResponse.FAIL"/> (default) to raise the exception to the stream thread, which then
+        /// calls <see cref="InnerExceptionHandler"/>.
+        /// Deserialization and production errors have their own handlers and are not given to this one.
+        /// </summary>
+        Func<ErrorHandlerContext, Exception, ExceptionHandlerResponse> ProcessingExceptionHandler { get; set; }
+
+        /// <summary>
+        /// Name of the dead letter queue topic (KIP-1034). When it is set, a source record skipped because an exception handler
+        /// returned CONTINUE (<see cref="DeserializationExceptionHandler"/>, <see cref="ProcessingExceptionHandler"/>,
+        /// or an async processor whose retry policy ends with <see cref="Stream.EndRetryBehavior.SKIP"/>) is sent to this topic,
+        /// with its raw key, value, headers and timestamp, plus headers describing the error (__streams.errors.*).
+        /// The topic is not created by Streamiz. Default : null (no dead letter queue).
+        /// </summary>
+        string DeadLetterQueueTopicName { get; set; }
+
+        /// <summary>
+        /// Engine used by the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+        /// <see cref="Net.AsyncProcessingMode.V1"/> (default) : records go through an internal request topic and are processed one by one by a dedicated external thread.
+        /// <see cref="Net.AsyncProcessingMode.V2"/> : records are processed inside the stream task, concurrently across keys and in order for a same key,
+        /// up to <see cref="Stream.RetryPolicy.MaxConcurrency"/> calls per processor and task. See the async processing documentation.
+        /// </summary>
+        AsyncProcessingMode AsyncProcessingMode { get; set; }
 
         /// <summary>
         /// Maximum allowed time between calls to consume messages (e.g., rd_kafka_consumer_poll())
@@ -240,6 +294,30 @@ namespace Streamiz.Kafka.Net
         string ClientId { get; set; }
 
         /// <summary>
+        /// A host:port pair pointing to an endpoint (e.g. HTTP or gRPC) of this instance, which your application exposes to serve
+        /// interactive queries. When it is set, each instance publishes which tasks and stores it hosts in the internal topic
+        /// <c>&lt;application.id&gt;-streamiz-metadata</c>, so <see cref="KafkaStream.AllMetadata"/> and
+        /// <see cref="KafkaStream.QueryMetadataForKey{K}(string, K, SerDes.ISerDes{K})"/> know the other instances. Default : null.
+        /// </summary>
+        string ApplicationServer { get; set; }
+
+        /// <summary>
+        /// When <see cref="ApplicationServer"/> is set, interval at which each instance republishes its metadata (it is also
+        /// published as soon as its tasks change). An instance whose metadata is older than 3 times this interval is considered
+        /// dead. Default : 30 seconds.
+        /// </summary>
+        long MetadataHeartbeatIntervalMs { get; set; }
+
+        /// <summary>
+        /// Number of standby replicas of each stateful task (default : 0). A standby replica is a copy of the state stores of a task
+        /// on another instance, kept up to date from the changelog topics : when the task moves to that instance, only the records
+        /// written since the last update of the standby are restored (persistent stores), and the standby stores can be queried with
+        /// <see cref="StoreQueryParameters{T,K,V}.EnableStaleStores"/>. Standby replicas are placed on the other instances of the
+        /// application, known from the metadata topic (it is also used when <see cref="ApplicationServer"/> is not set).
+        /// </summary>
+        int NumStandbyReplicas { get; set; }
+
+        /// <summary>
         /// The number of threads to execute stream processing.
         /// </summary>
         int NumStreamThreads { get; set; }
@@ -260,7 +338,7 @@ namespace Streamiz.Kafka.Net
         ITimestampExtractor DefaultTimestampExtractor { get; set; }
 
         /// <summary>
-        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default) and <see cref="ProcessingGuarantee.EXACTLY_ONCE"/>. Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting 'transaction.state.log.replication.factor' and 'transaction.state.log.min.isr'.
+        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default), <see cref="ProcessingGuarantee.EXACTLY_ONCE"/> and <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>. Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting 'transaction.state.log.replication.factor' and 'transaction.state.log.min.isr'.
         /// </summary>
         ProcessingGuarantee Guarantee { get; set; }
 
@@ -441,7 +519,6 @@ namespace Streamiz.Kafka.Net
         
         #region Not used for moment
 
-        /// private string applicationServerCst = "application.server";
         /// private string topologyOptimizationCst = "topology.optimization";
         /// private string stateCleanupDelayMsCst = "state.cleanup.delay.ms";
 
@@ -451,12 +528,6 @@ namespace Streamiz.Kafka.Net
         ///     set => configProperties.AddOrUpdate(topologyOptimizationCst, value);
         /// }
 
-        /// private string ApplicationServer
-        /// {
-        ///     get => configProperties[applicationServerCst];
-        ///     set => configProperties.AddOrUpdate(applicationServerCst, value);
-        /// }
-        
         /// private long StateCleanupDelayMs
         /// {
         ///     get => Convert.ToInt64(configProperties[stateCleanupDelayMsCst]);
@@ -486,6 +557,9 @@ namespace Streamiz.Kafka.Net
         private const string protobufSerializerReferenceSubjectNameStrategyCst = "protobuf.serializer.reference.subject.name.strategy";
         private const string applicatonIdCst = "application.id";
         private const string clientIdCst = "client.id";
+        private const string applicationServerCst = "application.server";
+        private const string metadataHeartbeatIntervalMsCst = "metadata.heartbeat.interval.ms";
+        private const string numStandbyReplicasCst = "num.standby.replicas";
         private const string numStreamThreadsCst = "num.stream.threads";
         private const string defaultKeySerDesCst = "default.key.serdes";
         private const string defaultValueSerDesCst = "default.value.serdes";
@@ -511,6 +585,9 @@ namespace Streamiz.Kafka.Net
         private const string innerExceptionHandlerCst = "inner.exception.handler";
         private const string deserializationExceptionHandlerCst = "deserialization.exception.handler";
         private const string productionExceptionHandlerCst = "production.exception.handler";
+        private const string processingExceptionHandlerCst = "processing.exception.handler";
+        private const string deadLetterQueueTopicNameCst = "errors.deadletterqueue.topic.name";
+        private const string asyncProcessingModeCst = "async.processing.mode";
         private const string logProcessingSummaryCst = "log.processing.summary";
         private const string stateStoreCacheMaxBytesCst = "statestore.cache.max.bytes";
         private const string queryWatermarkOffsetsTimeoutMsCst = "query.watermark.offsets.timeout.ms";
@@ -2466,12 +2543,18 @@ namespace Streamiz.Kafka.Net
             InnerExceptionHandler = (_) => ExceptionHandlerResponse.FAIL;
             ProductionExceptionHandler = (_) => ProductionExceptionHandlerResponse.FAIL;
             DeserializationExceptionHandler = (_, _, _) => ExceptionHandlerResponse.FAIL;
+            ProcessingExceptionHandler = (_, _) => ExceptionHandlerResponse.FAIL;
+            DeadLetterQueueTopicName = null;
+            AsyncProcessingMode = AsyncProcessingMode.V1;
             RocksDbConfigHandler = (_, _) => { };
             StateDir = Path.Combine(Path.GetTempPath(), "streamiz-kafka-net");
             ReplicationFactor = -1;
             WindowStoreChangelogAdditionalRetentionMs = (long)TimeSpan.FromDays(1).TotalMilliseconds;
             OffsetCheckpointManager = null;
             MetricsIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+            ApplicationServer = null;
+            MetadataHeartbeatIntervalMs = (long)TimeSpan.FromSeconds(30).TotalMilliseconds;
+            NumStandbyReplicas = 0;
             MetricsRecording = MetricsRecordingLevel.INFO;
             LogProcessingSummary = TimeSpan.FromMinutes(1);
             MetricsReporter = _ => { }; // nothing by default, maybe another behavior in future
@@ -2668,6 +2751,50 @@ namespace Streamiz.Kafka.Net
         }
 
         /// <summary>
+        /// A host:port pair pointing to an endpoint (e.g. HTTP or gRPC) of this instance, which your application exposes to serve
+        /// interactive queries. When it is set, each instance publishes which tasks and stores it hosts in the internal topic
+        /// <c>&lt;application.id&gt;-streamiz-metadata</c>, so <see cref="KafkaStream.AllMetadata"/> and
+        /// <see cref="KafkaStream.QueryMetadataForKey{K}(string, K, SerDes.ISerDes{K})"/> know the other instances. Default : null.
+        /// </summary>
+        [StreamConfigProperty("" + applicationServerCst)]
+        public string ApplicationServer
+        {
+            get => configProperties[applicationServerCst];
+            set => configProperties.AddOrUpdate(applicationServerCst, value);
+        }
+
+        /// <summary>
+        /// When <see cref="ApplicationServer"/> is set, interval at which each instance republishes its metadata (it is also
+        /// published as soon as its tasks change). An instance whose metadata is older than 3 times this interval is considered
+        /// dead. Default : 30 seconds.
+        /// </summary>
+        [StreamConfigProperty("" + metadataHeartbeatIntervalMsCst)]
+        public long MetadataHeartbeatIntervalMs
+        {
+            get => configProperties[metadataHeartbeatIntervalMsCst];
+            set => configProperties.AddOrUpdate(metadataHeartbeatIntervalMsCst, value);
+        }
+
+        /// <summary>
+        /// Number of standby replicas of each stateful task (default : 0). A standby replica is a copy of the state stores of a task
+        /// on another instance, kept up to date from the changelog topics : when the task moves to that instance, only the records
+        /// written since the last update of the standby are restored (persistent stores), and the standby stores can be queried with
+        /// <see cref="StoreQueryParameters{T,K,V}.EnableStaleStores"/>. Standby replicas are placed on the other instances of the
+        /// application, known from the metadata topic (it is also used when <see cref="ApplicationServer"/> is not set).
+        /// </summary>
+        [StreamConfigProperty("" + numStandbyReplicasCst)]
+        public int NumStandbyReplicas
+        {
+            get => configProperties[numStandbyReplicasCst];
+            set
+            {
+                if (value < 0)
+                    throw new StreamConfigException($"{numStandbyReplicasCst} can't be negative (got {value})");
+                configProperties.AddOrUpdate(numStandbyReplicasCst, value);
+            }
+        }
+
+        /// <summary>
         /// An identifier for the stream processing application. Must be unique within the Kafka cluster. It is used as 1) the default client-id prefix, 2) the group-id for membership management, 3) the changelog topic prefix.
         /// </summary>
         [StreamConfigProperty("" + applicatonIdCst)]
@@ -2725,7 +2852,8 @@ namespace Streamiz.Kafka.Net
         }
 
         /// <summary>
-        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default) and <see cref="ProcessingGuarantee.EXACTLY_ONCE"/>
+        /// The processing guarantee that should be used. Possible values are <see cref="ProcessingGuarantee.AT_LEAST_ONCE"/> (default), <see cref="ProcessingGuarantee.EXACTLY_ONCE"/> and <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>.
+        /// With <see cref="ProcessingGuarantee.AT_MOST_ONCE"/>, idempotence is disabled and <see cref="MessageSendMaxRetries"/> is set to 0 (you can change it after setting the guarantee, but a producer retry can write an output record twice).
         /// Note that exactly-once processing requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting
         /// <code>transaction.state.log.replication.factor</code> and <code>transaction.state.log.min.isr</code>.
         /// </summary>
@@ -2746,6 +2874,15 @@ namespace Streamiz.Kafka.Net
                 }
                 else if (value == ProcessingGuarantee.AT_LEAST_ONCE)
                     CommitIntervalMs = DEFAULT_COMMIT_INTERVAL_MS;
+                else if (value == ProcessingGuarantee.AT_MOST_ONCE)
+                {
+                    // set first: producer settings can't be changed while the guarantee is still exactly-once
+                    configProperties.AddOrUpdate(processingGuaranteeCst, value);
+                    EnableIdempotence = false;
+                    // a producer retry can write an output record twice
+                    MessageSendMaxRetries = 0;
+                    CommitIntervalMs = DEFAULT_COMMIT_INTERVAL_MS;
+                }
 
                 configProperties.AddOrUpdate(processingGuaranteeCst, value);
                 changeGuarantee = false;
@@ -2866,6 +3003,10 @@ namespace Streamiz.Kafka.Net
 
         /// <summary>
         /// Inner exception handling function called during processing.
+        /// Return <see cref="ExceptionHandlerResponse.FAIL"/> to stop the stream thread, or
+        /// <see cref="ExceptionHandlerResponse.CONTINUE"/> to close the tasks, rejoin the consumer group and keep processing.
+        /// With CONTINUE, a source record that failed in a processor or in the timestamp extractor is skipped
+        /// when it is consumed again, so it is not processed in an endless loop.
         /// </summary>
         [StreamConfigProperty("" + innerExceptionHandlerCst)]
         public Func<Exception, ExceptionHandlerResponse> InnerExceptionHandler
@@ -2892,6 +3033,48 @@ namespace Streamiz.Kafka.Net
         {
             get => configProperties[productionExceptionHandlerCst];
             set => configProperties.AddOrUpdate(productionExceptionHandlerCst, value);
+        }
+
+        /// <summary>
+        /// Exception handling function called when a processor (or a user function of the DSL) throws an exception
+        /// while processing one record (KIP-1033).
+        /// Return <see cref="ExceptionHandlerResponse.CONTINUE"/> to skip the record and keep processing the next records,
+        /// or <see cref="ExceptionHandlerResponse.FAIL"/> (default) to raise the exception to the stream thread, which then
+        /// calls <see cref="InnerExceptionHandler"/>.
+        /// Deserialization and production errors have their own handlers and are not given to this one.
+        /// </summary>
+        [StreamConfigProperty("" + processingExceptionHandlerCst)]
+        public Func<ErrorHandlerContext, Exception, ExceptionHandlerResponse> ProcessingExceptionHandler
+        {
+            get => configProperties[processingExceptionHandlerCst];
+            set => configProperties.AddOrUpdate(processingExceptionHandlerCst, value);
+        }
+
+        /// <summary>
+        /// Name of the dead letter queue topic (KIP-1034). When it is set, a source record skipped because an exception handler
+        /// returned CONTINUE (<see cref="DeserializationExceptionHandler"/>, <see cref="ProcessingExceptionHandler"/>,
+        /// or an async processor whose retry policy ends with <see cref="Stream.EndRetryBehavior.SKIP"/>) is sent to this topic,
+        /// with its raw key, value, headers and timestamp, plus headers describing the error (__streams.errors.*).
+        /// The topic is not created by Streamiz. Default : null (no dead letter queue).
+        /// </summary>
+        [StreamConfigProperty("" + deadLetterQueueTopicNameCst)]
+        public string DeadLetterQueueTopicName
+        {
+            get => configProperties[deadLetterQueueTopicNameCst];
+            set => configProperties.AddOrUpdate(deadLetterQueueTopicNameCst, value);
+        }
+
+        /// <summary>
+        /// Engine used by the external async processors (MapAsync, MapValuesAsync, FlatMapAsync, FlatMapValuesAsync, ForeachAsync).
+        /// <see cref="Net.AsyncProcessingMode.V1"/> (default) : records go through an internal request topic and are processed one by one by a dedicated external thread.
+        /// <see cref="Net.AsyncProcessingMode.V2"/> : records are processed inside the stream task, concurrently across keys and in order for a same key,
+        /// up to <see cref="Stream.RetryPolicy.MaxConcurrency"/> calls per processor and task. See the async processing documentation.
+        /// </summary>
+        [StreamConfigProperty("" + asyncProcessingModeCst)]
+        public AsyncProcessingMode AsyncProcessingMode
+        {
+            get => configProperties[asyncProcessingModeCst];
+            set => configProperties.AddOrUpdate(asyncProcessingModeCst, value);
         }
 
         /// <summary>

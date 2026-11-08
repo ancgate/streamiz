@@ -191,7 +191,7 @@ All the following metrics have a recording level of `DEBUG`.
 
 ### Processor metrics
 
-All the following metrics have a recording level of `DEBUG`.
+The following metrics have a recording level of `DEBUG`.
 
 **Sensor : internal.[THREAD_ID].task.[TASK_ID].node.[PROCESSOR_NODE_ID].sensor.process, Type : stream-processor-node-metrics**
 
@@ -199,6 +199,16 @@ All the following metrics have a recording level of `DEBUG`.
 | :---             |    :----:   |          ---: |
 | <span style="color: #06389C; font-weight: bold;">process-rate</span>        | The average number of calls to process per second        | thread_id,task_id,processor_node_id  |
 | <span style="color: #06389C; font-weight: bold;">process-total</span>       | The total number of calls to process        | thread_id,task_id,processor_node_id  |
+
+The following end-to-end latency metrics ([KIP-613](https://cwiki.apache.org/confluence/display/KAFKA/KIP-613%3A+Add+end-to-end+latency+metrics+to+Streams)) have a recording level of `INFO`. They are only recorded by source nodes and terminal nodes (nodes without children, like sink nodes). The latency is the wall-clock time when the node processes the record minus the record timestamp, in milliseconds.
+
+**Sensor : internal.[THREAD_ID].task.[TASK_ID].node.[PROCESSOR_NODE_ID].sensor.record-e2e-latency, Type : stream-processor-node-metrics**
+
+| Metric name      | Description | Tags          |
+| :---             |    :----:   |          ---: |
+| <span style="color: #06389C; font-weight: bold;">record-e2e-latency-avg</span>        | The average end-to-end latency of a record, measuring by comparing the record timestamp with the system time when it has been fully processed by the node        | thread_id,task_id,processor_node_id  |
+| <span style="color: #06389C; font-weight: bold;">record-e2e-latency-min</span>        | The minimum end-to-end latency of a record, measuring by comparing the record timestamp with the system time when it has been fully processed by the node        | thread_id,task_id,processor_node_id  |
+| <span style="color: #06389C; font-weight: bold;">record-e2e-latency-max</span>        | The maximum end-to-end latency of a record, measuring by comparing the record timestamp with the system time when it has been fully processed by the node        | thread_id,task_id,processor_node_id  |
 
 ### State store metrics
 
@@ -288,6 +298,16 @@ All the following metrics have a recording level of `DEBUG`. The `store-scope` v
 | <span style="color: #06389C; font-weight: bold;">put-rate</span>        | The average number of calls to remove per second        | thread_id,task_id,[STORE-TYPE]_id  |
 | <span style="color: #06389C; font-weight: bold;">put-avg</span>       | The average latency of calls to remove        | thread_id,task_id,[STORE-TYPE]_id  |
 | <span style="color: #06389C; font-weight: bold;">put-max</span>       | The maximum latency of calls to remove        | thread_id,task_id,[STORE-TYPE]_id  |
+
+**Sensor : internal.[THREAD_ID].task.[TASK_ID].store.[STORE_NAME].sensor.restore, Type : stream-state-metrics**
+
+Recorded for each batch of changelog records restored into the store.
+
+| Metric name      | Description | Tags          |
+| :---             |    :----:   |          ---: |
+| <span style="color: #06389C; font-weight: bold;">restore-rate</span>        | The average number of restorations per second        | thread_id,task_id,[STORE-TYPE]_id  |
+| <span style="color: #06389C; font-weight: bold;">restore-latency-avg</span>       | The average latency of restorations        | thread_id,task_id,[STORE-TYPE]_id  |
+| <span style="color: #06389C; font-weight: bold;">restore-latency-max</span>       | The maximum latency of restorations        | thread_id,task_id,[STORE-TYPE]_id  |
 
 ### RocksDb metrics
 

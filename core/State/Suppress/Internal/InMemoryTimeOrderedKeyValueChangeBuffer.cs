@@ -211,7 +211,7 @@ namespace Streamiz.Kafka.Net.State.Suppress.Internal
                 Name,
                 context.Metrics);
             
-            context.Register(root, Restore);
+            context.Register(root, Restore, RestoreBatch);
             UpdateBufferMetrics();
             IsOpen = true;
         }
@@ -250,6 +250,20 @@ namespace Streamiz.Kafka.Net.State.Suppress.Internal
         
         private void Restore(Bytes key, byte[] value, long timestamp)
         {
+            RestoreRecord(key, value);
+            UpdateBufferMetrics();
+        }
+
+        // metrics are recorded once per batch instead of once per record
+        private void RestoreBatch(IReadOnlyList<(Bytes Key, byte[] Value, long Timestamp)> records)
+        {
+            foreach (var record in records)
+                RestoreRecord(record.Key, record.Value);
+            UpdateBufferMetrics();
+        }
+
+        private void RestoreRecord(Bytes key, byte[] value)
+        {
             if (value == null)
             {
                 if (index.TryGetValue(key, out var bufferedKey))
@@ -274,7 +288,6 @@ namespace Streamiz.Kafka.Net.State.Suppress.Internal
                 var time = bufferValueAndTime.GetLong();
                 CleanPut(time, key, bufferValue);
             }
-            UpdateBufferMetrics();
         }
 
         private void UpdateBufferMetrics()

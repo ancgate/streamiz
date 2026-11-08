@@ -89,6 +89,58 @@ namespace Streamiz.Kafka.Net.Tests.TestDriver
             }
         }
 
+        private static TopologyTestDriver PunctuationDriver(out TestInputTopic<string, string> input)
+        {
+            var config = new StreamConfig<StringSerDes, StringSerDes>
+            {
+                ApplicationId = "test-advance-wall-clock-time-exact"
+            };
+
+            var builder = new StreamBuilder();
+            builder.Stream<string, string>("input")
+                .Process(new ProcessorBuilder<string, string>()
+                    .Processor<ProcessingTimePunctuationProcessor>()
+                    .Build());
+
+            var driver = new TopologyTestDriver(builder.Build(), config);
+            input = driver.CreateInputTopic<string, string>("input");
+            return driver;
+        }
+
+        [Test]
+        public void Should_Advance_The_Clock_By_Exactly_The_Given_Duration()
+        {
+            ProcessingTimePunctuationProcessor.PunctuationIntervalMs = 100;
+            using var driver = PunctuationDriver(out var input);
+            input.PipeInput("key1", "value1");
+
+            // each punctuation receives the mock wall clock time: two advances of 150ms must be 150ms apart
+            // (the driver used to move the clock further each time a punctuation fired)
+            driver.AdvanceWallClockTime(TimeSpan.FromMilliseconds(150));
+            driver.AdvanceWallClockTime(TimeSpan.FromMilliseconds(150));
+
+            var times = ProcessingTimePunctuationProcessor.PunctuationTimes;
+            Assert.AreEqual(2, times.Count);
+            Assert.AreEqual(150, times[1] - times[0]);
+        }
+
+        [Test]
+        public void Should_Fire_A_Punctuation_Once_Per_Advance_Without_Catching_Up_Missed_Intervals()
+        {
+            ProcessingTimePunctuationProcessor.PunctuationIntervalMs = 100;
+            using var driver = PunctuationDriver(out var input);
+            input.PipeInput("key1", "value1");
+
+            // like Kafka: advancing by 3.5 intervals fires the punctuation once, at the new time
+            driver.AdvanceWallClockTime(TimeSpan.FromMilliseconds(350));
+            Assert.AreEqual(1, ProcessingTimePunctuationProcessor.PunctuationTimes.Count);
+
+            driver.AdvanceWallClockTime(TimeSpan.FromMilliseconds(100));
+            Assert.AreEqual(2, ProcessingTimePunctuationProcessor.PunctuationTimes.Count);
+            Assert.AreEqual(100,
+                ProcessingTimePunctuationProcessor.PunctuationTimes[1] - ProcessingTimePunctuationProcessor.PunctuationTimes[0]);
+        }
+
         [Test]
         public void Should_Not_Trigger_Punctuation_Before_Interval_Elapsed()
         {

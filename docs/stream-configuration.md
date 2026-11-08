@@ -32,7 +32,11 @@ Kafka Streams applications can only communicate with a single Kafka cluster spec
 
 ### Guarantee
 
-The processing guarantee that should be used. Possible values are ```ProcessingGuarantee.AT_LEAST_ONCE``` (default) and ```ProcessingGuarantee.EXACTLY_ONCE```. Note that if exactly-once processing is enabled, the default for parameter commit.interval.ms changes to 100ms. Additionally, consumers are configured with isolation.level="read_committed" and producers are configured with retries=Int32.MAX_VALUE, enable.idempotence=true, and max.in.flight.requests.per.connection=5 per default. Note that by default exactly-once processing requires a cluster of at least three brokers what is the recommended setting for production. For development you can change this, by adjusting broker setting transaction.state.log.replication.factor and transaction.state.log.min.isr to the number of broker you want to use.
+The processing guarantee that should be used. Possible values are ```ProcessingGuarantee.AT_LEAST_ONCE``` (default), ```ProcessingGuarantee.EXACTLY_ONCE``` and ```ProcessingGuarantee.AT_MOST_ONCE```.
+
+With ```ProcessingGuarantee.AT_MOST_ONCE```, the consumed offsets are committed right after each poll, before the records are processed (for async processors like `MapAsync`, right after each record is consumed, before calling the external system). A record is never processed twice, but the records polled and not processed yet are lost if the application crashes. Producers are configured with enable.idempotence=false and retries=0, so an output record isn't written twice; a failed send goes to the `ProductionExceptionHandler`. You can set `MessageSendMaxRetries` after the guarantee to allow retries, with the risk of duplicated output records. The periodic commit (commit.interval.ms) still flushes the producer and the state stores.
+
+Note that if exactly-once processing is enabled, the default for parameter commit.interval.ms changes to 100ms. Additionally, consumers are configured with isolation.level="read_committed" and producers are configured with retries=Int32.MAX_VALUE, enable.idempotence=true, and max.in.flight.requests.per.connection=5 per default. Note that by default exactly-once processing requires a cluster of at least three brokers what is the recommended setting for production. For development you can change this, by adjusting broker setting transaction.state.log.replication.factor and transaction.state.log.min.isr to the number of broker you want to use.
 
 ### DefaultTimestampExtractor
 
@@ -194,9 +198,24 @@ Maximum allowed time between calls to consume messages for high-level consumers.
 [Deprecated] Maximum number of records to buffer per partition. (Default: Int32.MaxValue)
 If this number is exceeded, the consumer pauses for this partition until stream instance process messages.
 
+### ApplicationServer
+
+A `host:port` pair pointing to the endpoint where this instance serves interactive queries (default: none). When it is set, the instances of the application share their metadata (which tasks and stores each instance hosts) through the internal topic `<application.id>-streamiz-metadata`, so `KafkaStream.AllMetadata()` and `KafkaStream.QueryMetadataForKey(...)` know the other instances. See [Interactive queries](interactive-queries.md).
+
+### MetadataHeartbeatIntervalMs
+
+When `ApplicationServer` is set, interval at which each instance republishes its metadata (default: 30 seconds). It's also published as soon as its tasks change. An instance whose metadata is older than 3 times this interval is considered dead.
+
+### NumStandbyReplicas
+
+Number of standby replicas of each stateful task (default: 0). A standby replica is a copy of the state stores of a task on another instance, kept up to date from the changelog topics: when the task moves to that instance, only the records written since the last update are restored (persistent stores), and the standby stores can be queried as stale stores. The standby replicas are placed using the metadata topic (it's also used when `ApplicationServer` isn't set). See [Interactive queries](interactive-queries.md#standby-replicas).
+
 ### InnerExceptionHandler
 
 Inner exception handling function called during processing.
+
+- `FAIL` (default): the stream thread stops.
+- `CONTINUE`: the stream thread closes its tasks, rejoins the consumer group and keeps processing from the last committed offsets. If the exception was raised by one source record (in a processor, including `MapAsync`/`ForeachAsync`..., or in the timestamp extractor), that record is skipped when it is consumed again. Records processed after the last commit and before the failing record can be processed again (at-least-once).
 
 ### DeserializationExceptionHandler
 
@@ -205,6 +224,44 @@ Deserialization exception handling function called when deserialization exceptio
 ### ProductionExceptionHandler
 
 Production exception handling function called when kafka produce exception is raise.
+
+### ProcessingExceptionHandler
+
+Exception handling function called when a processor, or one of your functions in the DSL (`Map`, `Filter`, `Peek`...), throws an exception while processing one record. It receives an `ErrorHandlerContext` (source topic, partition, offset, timestamp, headers, raw key and value, processor name, task id) and the exception.
+
+- `FAIL` (default): the exception is raised to the stream thread, which calls the `InnerExceptionHandler`.
+- `CONTINUE`: the record is skipped (and sent to the dead letter queue if `DeadLetterQueueTopicName` is set), and the task keeps processing the next records, without closing the tasks or rejoining the group.
+
+Deserialization and production errors are not given to this handler: they have their own handlers.
+
+``` csharp
+config.ProcessingExceptionHandler = (context, exception) =>
+{
+    logger.LogWarning(exception, "Skip record {Topic}/{Partition}/{Offset}", context.Topic, context.Partition, context.Offset);
+    return ExceptionHandlerResponse.CONTINUE;
+};
+```
+
+### DeadLetterQueueTopicName
+
+Name of the dead letter queue topic (`errors.deadletterqueue.topic.name`, default: none). When it is set, each source record skipped because a handler returned `CONTINUE` is sent to this topic:
+
+- the `DeserializationExceptionHandler` returned `CONTINUE`,
+- the `ProcessingExceptionHandler` returned `CONTINUE`,
+- an async processor (`MapAsync`, `ForeachAsync`...) ended its retry policy with `EndRetryBehavior.SKIP`.
+
+The record keeps its raw key, value, headers and timestamp. These headers describe the error:
+
+| Header | Content |
+| --- | --- |
+| `__streams.errors.exception` | Exception type |
+| `__streams.errors.message` | Exception message |
+| `__streams.errors.stacktrace` | Exception, with its stack trace |
+| `__streams.errors.topic` | Source topic |
+| `__streams.errors.partition` | Source partition |
+| `__streams.errors.offset` | Source offset |
+
+Streamiz does not create the topic, so create it before starting the application. With `EXACTLY_ONCE`, the record is written in the same transaction as the task's outputs. Production errors (`ProductionExceptionHandler`) are not sent to the dead letter queue.
 
 ### Logger
 

@@ -194,6 +194,51 @@ Detailed behavior:
 - When a record key is received for the first time for a given window, then the value of that record is used as the initial aggregate value.
 - Whenever a record with a non-null value is received for a given window, the reducer is called.
 
+## Sliding windows
+
+**Sliding windows (KIP-450)** are fixed-size windows which slide continuously over the time axis: two records are in the same window when the difference of their timestamps is less than or equal to the time difference. Unlike hopping windows, sliding windows are not aligned to the epoch: they are created from the record timestamps, so there is one window per distinct set of records within a time difference, and no empty window.
+
+`Count`, `Aggregate` and `Reduce` work the same as with tumbling or hopping windows.
+
+```csharp
+var countStream = builder
+                        .Stream<string, string>("topic")
+                        .GroupByKey()
+                        .WindowedBy(SlidingWindowOptions.Of(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1)))
+                        .Count();
+```
+
+- `SlidingWindowOptions.Of(timeDifference)` creates sliding windows without grace period; `SlidingWindowOptions.Of(timeDifference, grace)` admits out-of-order records for the grace period after the end of a window.
+- A window covers `[start, start + timeDifference]`, **both ends inclusive**. It is returned as a `TimeWindow` whose `EndMs` is `start + timeDifference`, so the output keys are deserialized with `new TimeWindowedSerDes<K>(keySerdes, timeDifferenceMs)`.
+- For each record at `t`, the windows which contain it are updated, and up to two windows are created: its left window `[t - timeDifference, t]`, and its right window `[t + 1, t + 1 + timeDifference]` when later records fall in it.
+- Records with a timestamp smaller than the time difference all go in the window `[0, timeDifference]`, because a window can't start before 0.
+- Records with a null key or a null value are ignored.
+- The retention of the window store must be at least `2 * timeDifference + grace` (the default retention is one day): use `Materialized.WithRetention(...)` for longer windows.
+
+## Session windows
+
+**Session windows** group the records of a key into sessions: periods of activity separated by an inactivity gap. A record which is at most the inactivity gap away from a session of its key is added to it, a record which falls between two sessions merges them, otherwise the record starts a new session.
+
+```csharp
+var sessions = builder
+                        .Stream<string, string>("topic")
+                        .GroupByKey()
+                        .WindowedBy(SessionWindowOptions.Of(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1)))
+                        .Count(InMemorySessions.As<string, long?>("sessions-store"));
+
+sessions.ToStream()
+        .To("output", new SessionWindowedSerDes<string>(new StringSerDes()), new NullableInt64SerDes());
+```
+
+- `SessionWindowOptions.Of(inactivityGap)` creates session windows without grace period; `SessionWindowOptions.Of(inactivityGap, grace)` admits out-of-order records for the grace period.
+- A session covers `[start, end]` (the timestamps of its first and last records), **both ends inclusive**. It is returned as a `SessionWindow`, and the output keys are deserialized with `new SessionWindowedSerDes<K>(keySerdes)`.
+- `Count()` and `Reduce(reducer)` work as for the other windows. `Aggregate(initializer, aggregator, sessionMerger)` also takes a **merger**, which combines the aggregates of two sessions when a record merges them. `Reduce` merges sessions with the reducer.
+- When a record merges sessions, a tombstone is forwarded for each merged session (the session is removed), then the new session. Results are forwarded with the session end as timestamp.
+- **Tombstones**: the session `Count` returns a `long?` (`IKTable<Windowed<K>, long?>`, default value serdes `NullableInt64SerDes`), so the tombstones of merged sessions are null counts, written as null values (real Kafka tombstones). With `Aggregate`, use a nullable or reference type for the aggregate: a non-nullable value type can't be null, so its tombstones would be forwarded with its default value.
+- A session can still be extended by a record up to the inactivity gap after its end: a record is dropped when its session ends before `stream time - grace - inactivity gap`. Records with a null key are ignored.
+- Session stores are materialized with `InMemorySessions.As<K, V>(...)` or `RocksDbSessions.As<K, V>(...)` (default: RocksDB). Their retention must be at least `inactivity gap + grace` (the default retention is one day). They can be queried with `QueryableStoreTypes.SessionStore<K, V>()` and `TopologyTestDriver.GetSessionStore<K, V>(name)`.
+- To emit only the final result of each session, use `Suppress(SuppressedBuilder.UntilWindowClose<Windowed<K>, V>(inactivityGap + grace, bufferConfig))`: a session is emitted once its end is at most `stream time - (inactivity gap + grace)`, and the tombstones of sessions which were never emitted are dropped (null tombstones: `Count`, and nullable or reference-type aggregates).
+
 ## IKStream-IKStream Join
 
 IKStream-IKStream joins are always windowed joins, because otherwise the size of the internal state store used to perform the join – e.g., a sliding window or “buffer” – would grow indefinitely. For stream-stream joins it’s important to highlight that a new input record on one side will produce a join output for each matching record on the other side, and there can be multiple such matching records in a given join window.
@@ -328,6 +373,27 @@ Input records for the stream with a null key or a null value are ignored and do 
 Input records for the table with a null value are interpreted as tombstones for the corresponding key, which indicate the deletion of the key from the table. Tombstones do not trigger the join.
 For each input record on the left side that does not have any match on the right side, the ValueJoiner will be called with joiner(leftRecord.value, null); this explains the row with timestamp=3 in the table below, which lists [A, null] in the LEFT JOIN column.
 
+### Versioned tables and grace period (KIP-914, KIP-923)
+
+When the table is materialized in a versioned store (`InMemoryVersioned.As` / `RocksDbVersioned.As`), each stream record is joined with the table value valid at the stream record's timestamp, not with the latest value.
+
+To also handle out-of-order stream records, or stream records which arrive before the table update they should see, add a grace period to the join:
+
+```csharp
+var table = builder.Table("topic2", InMemoryVersioned.As<string, string>("table-store", TimeSpan.FromMinutes(10)));
+
+builder.Stream<string, string>("topic1")
+    .Join(table, (v1, v2) => $"{v1}-{v2}",
+        new StreamTableJoinProps<string, string, string>(new StringSerDes(), new StringSerDes(), new StringSerDes())
+            .WithGracePeriod(TimeSpan.FromSeconds(30)))
+    .To("output-join");
+```
+
+- Stream records are kept in a buffer store (`<join name>-buffer`, with a changelog topic) until the stream time reaches their timestamp plus the grace period. They are then joined in timestamp order with the table value valid at their timestamp, and keep their timestamp and headers.
+- A stream record older than the stream time minus the grace period is joined right away.
+- The table must be a versioned source table, and the grace period can't be larger than its history retention; otherwise the topology can't be built.
+- The buffer is kept in memory (restored from its changelog after a restart), so it must fit the records of one grace period.
+
 ## IKStream-IGlobalKTable Join
 
 IKStream-IGlobalKTable joins are always non-windowed joins. They allow you to perform table lookups against a IGlobalKTable (entire changelog stream) upon receiving a new record from the IKStream (record stream). An example use case would be “star queries” or “star joins”, where you would enrich a stream of user activities (IKStream) with the latest user profile information (IGlobalKTable) and further context information (further GlobalKTables). However, because GlobalKTables have no notion of time, a IKStream-IGlobalKTable join is not a temporal join, and there is no event-time synchronization between updates to a IGlobalKTable and processing of IKStream records.
@@ -461,6 +527,47 @@ Detailed behavior:
 - For each input record on one side that does not have any match on the other side, the ValueJoiner will be called with (leftRecord.value, null) or (null, rightRecord.value), respectively; this explains the rows with timestamp=3 and timestamp=7 in the table below, which list [A, null] and [null, b], respectively, in the OUTER JOIN column.
 
 
+## IKTable-IKTable Foreign-Key Join
+
+- (IKTable, IKTable) → IKTable
+
+Joins each record of this table with the record of another table whose key is extracted from the value of this record (a foreign key), like Kafka Streams (KIP-213). It's a many-to-one join: many records of this table can refer to the same record of the other table, and an update of the other table updates the results of all the records which refer to it. The result table has the keys of this table.
+
+The tables don't need to be co-partitioned: the join sends subscriptions to the other table through an internal topic keyed by the foreign key (`<application.id>-<name>-subscription-registration-topic`, co-partitioned with the other table), and the other table sends back responses through an internal topic keyed by the primary key (`<application.id>-<name>-subscription-response-topic`, co-partitioned with this table). The subscriptions are kept in a state store (`<name>-subscription-store`). Without a name, the processors, topics and store get generated names (`KTABLE-FK-JOIN-...`).
+
+### Inner Join
+
+``` csharp
+// orders: orderId -> Order (with a ProductId), products: productId -> Product
+var orders = builder.Table<string, Order>("orders");
+var products = builder.Table<string, Product>("products");
+
+var enriched = orders.Join(
+    products,
+    order => order.ProductId,                      // foreign key extractor
+    (order, product) => new EnrichedOrder(order, product),
+    InMemory.As<string, EnrichedOrder>("enriched-orders"), // optional
+    "orders-products");                            // optional name
+```
+
+### Left Join
+
+``` csharp
+var enriched = orders.LeftJoin(
+    products,
+    order => order.ProductId,
+    (order, product) => new EnrichedOrder(order, product)); // product is null if there is no match
+```
+
+Detailed behavior:
+- A record of this table with a foreign key produces a result once the other table has a record with this key (inner join), or straight away with a null foreign value (left join). The left join also produces a result, with a null foreign value, when the foreign key is null; the inner join skips it.
+- When the foreign key of a record changes, its old subscription is removed and the result is computed with the new foreign key. If there is no record for the new foreign key, the inner join deletes the result (tombstone) and the left join calls the joiner with a null foreign value.
+- When a record of this table is deleted, its result is deleted.
+- When a record of the other table is updated, the results of all the records which refer to it are recomputed. When it is deleted, the inner join deletes these results and the left join calls the joiner with a null foreign value.
+- Each response carries a hash of the value of this table which sent the subscription: if the value changed in the meantime, the response is stale and is dropped, so results are not computed with an old value.
+- The serdes of the keys and values of both tables are used to serialize the foreign key, the primary key, the hashed value and the foreign value in the internal topics and store: set them explicitly if the default serdes of the configuration don't match.
+
+
 ## Drop Duplicates
 
 This function removes duplicate records from the same key based on the time interval mentioned. Duplicate records are detected based on the kafka key plus the lambda returns; In this simplified example, the record value is the event ID.  The internal processor remembers the old event IDs in an associated window state store, which automatically purges/expires event IDs from the store after a certain amount of time has passed to prevent the store from growing indefinitely.
@@ -511,5 +618,26 @@ The key parts of this program are:
 - `TumblingWindowOptions.Of(TimeSpan.FromMinutes(1))` Define a tumbling window of 1 minute
 - `.Suppress(SuppressedBuilder.UntilWindowClose<Windowed<string>, long>(TimeSpan.Zero,` This configures the suppression operator to emit nothing for a window until it closes, and then emit the final result without a grace period.
 - `StrictBufferConfig.Unbounded()))` This configures the buffer used for storing events until their windows close.
+
+### Rate limiting updates: `UntilTimeLimit` and `UntilWallClockTimeLimit`
+
+Suppression is not limited to windowed tables. To limit how often a `KTable` emits updates, buffer the latest value of each key for a fixed amount of time:
+
+- `SuppressedBuilder.UntilTimeLimit<K, V>(timeLimit, bufferConfig)` uses **stream time** (record timestamps). A buffered value is emitted when a newer record moves the stream time past the limit, so nothing is emitted while no new records arrive.
+- `SuppressedBuilder.UntilWallClockTimeLimit<K, V>(timeLimit, bufferConfig)` uses **wall-clock time** (KIP-424). A buffered value is emitted once the limit has elapsed on the clock, even if no new records arrive.
+
+In both modes, an update for a key that is already buffered replaces the buffered value but does not restart the timer, so each key is emitted at most once per time limit. The buffer configuration (`StrictBufferConfig` / `EagerConfig`) works the same way as for `UntilWindowClose`.
+
+``` csharp
+builder.Table("input", new StringSerDes(), new StringSerDes(), InMemory.As<string, string>("table-store"))
+    .Suppress(SuppressedBuilder.UntilWallClockTimeLimit<string, string>(TimeSpan.FromMinutes(1),
+                StrictBufferConfig.Unbounded())
+        .WithKeySerdes(new StringSerDes())
+        .WithValueSerdes(new StringSerDes()))
+    .ToStream()
+    .To("output");
+```
+
+In `TopologyTestDriver`, use `driver.AdvanceWallClockTime(...)` to move the wall clock forward and trigger the emission.
 
 More details on the `Suppressed` class in the documentation.

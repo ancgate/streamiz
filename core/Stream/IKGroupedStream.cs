@@ -348,5 +348,27 @@ namespace Streamiz.Kafka.Net.Stream
         /// <returns>an instance of <see cref="ITimeWindowedKStream{K, V}"/></returns>
         ITimeWindowedKStream<K, V> WindowedBy<W>(WindowOptions<W> options)
             where W : Window;
+
+        /// <summary>
+        /// Create a new <see cref="ITimeWindowedKStream{K, V}"/> instance that can be used to perform sliding windowed aggregations (KIP-450).
+        /// A record is aggregated in every window [start, start + time difference] (both ends inclusive) which contains it,
+        /// and windows are only created from the record timestamps, so there are no empty windows.
+        /// The output keys can be deserialized with <see cref="SerDes.TimeWindowedSerDes{T}"/> using the time difference as window size.
+        /// The retention of the window store must be at least 2 * time difference + grace period.
+        /// </summary>
+        /// <param name="options">the specification of the sliding windows</param>
+        /// <returns>an instance of <see cref="ITimeWindowedKStream{K, V}"/></returns>
+        ITimeWindowedKStream<K, V> WindowedBy(SlidingWindowOptions options);
+
+        /// <summary>
+        /// Create a new <see cref="ISessionWindowedKStream{K, V}"/> instance that can be used to perform session windowed aggregations.
+        /// The records of a key are grouped into sessions: a record at most the inactivity gap away from a session is added to it
+        /// (merging sessions if it bridges them), otherwise it starts a new session.
+        /// Sessions are [start, end], both ends inclusive, and the output keys can be deserialized with <see cref="SerDes.SessionWindowedSerDes{T}"/>.
+        /// The retention of the session store must be at least inactivity gap + grace period.
+        /// </summary>
+        /// <param name="options">the specification of the session windows</param>
+        /// <returns>an instance of <see cref="ISessionWindowedKStream{K, V}"/></returns>
+        ISessionWindowedKStream<K, V> WindowedBy(SessionWindowOptions options);
     }
 }

@@ -10,12 +10,15 @@ namespace Streamiz.Kafka.Net.Stream.Internal
         public ISerDes<V> ValueSerdes { get; }
         public ISerDes<VO> OtherValueSerDes { get; }
         public string Name { get; }
+        public TimeSpan? GracePeriod { get; }
 
         public Joined(ISerDes<K> keySerdes,
                         ISerDes<V> valueSerdes,
                         ISerDes<VO> otherValueSerDes,
-                        String name)
+                        String name,
+                        TimeSpan? gracePeriod = null)
         {
+            GracePeriod = gracePeriod;
             KeySerdes = keySerdes;
             ValueSerdes = valueSerdes;
             OtherValueSerDes = otherValueSerDes;

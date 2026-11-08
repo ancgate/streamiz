@@ -17,23 +17,41 @@ namespace Streamiz.Kafka.Net.State.Internal
             this.internalTopologyBuilder = internalTopologyBuilder;
         }
 
-        public IEnumerable<T> Stores<T, K, V>(StoreQueryParameters<T, K, V> storeQueryParameters) 
+        // for the stores of tasks which don't belong to a stream thread (standby replicas)
+        protected StreamThreadStateStoreProvider(InternalTopologyBuilder internalTopologyBuilder)
+        {
+            this.internalTopologyBuilder = internalTopologyBuilder;
+        }
+
+        public virtual IEnumerable<T> Stores<T, K, V>(StoreQueryParameters<T, K, V> storeQueryParameters) 
             where T : class
         {
-            // TODO: handle 'staleStoresEnabled' and 'partition' when they are added to StoreQueryParameters
-
             if (this.streamThread.State == ThreadState.DEAD)
             {
                 return Enumerable.Empty<T>();
             }
-            if (!(this.streamThread.State == ThreadState.RUNNING))
+
+            // stale stores: the thread can be starting, rebalancing or restoring its tasks, as long as it's alive
+            bool staleStoresAllowed = storeQueryParameters.StaleStores &&
+                                      this.streamThread.State != ThreadState.PENDING_SHUTDOWN &&
+                                      this.streamThread.State != ThreadState.CREATED;
+            if (!(this.streamThread.State == ThreadState.RUNNING) && !staleStoresAllowed)
             {
                 throw new InvalidStateStoreException($"Cannot get state store {storeQueryParameters.StoreName} because " +
                     $"the stream thread is {streamThread.State}, not RUNNING");
             }
 
+            return StoresOf(streamThread.ActiveTasks, storeQueryParameters);
+        }
+
+        protected static IEnumerable<T> StoresOf<T, K, V>(IEnumerable<ITask> tasks, StoreQueryParameters<T, K, V> storeQueryParameters)
+            where T : class
+        {
+            if (storeQueryParameters.Partition.HasValue)
+                tasks = tasks.Where(t => t.Id.Partition == storeQueryParameters.Partition.Value);
+
             List<T> stores = new List<T>();
-            foreach (var streamTask in streamThread.ActiveTasks)
+            foreach (var streamTask in tasks)
             {
                 IStateStore store = streamTask.GetStore(storeQueryParameters.StoreName);
                 if (store != null && storeQueryParameters.QueryableStoreType.Accepts(store))

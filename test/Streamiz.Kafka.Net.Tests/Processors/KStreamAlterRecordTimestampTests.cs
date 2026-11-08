@@ -8,7 +8,7 @@ using System.Linq;
 
 namespace Streamiz.Kafka.Net.Tests.Processors
 {
-    public class KStreamWithRecordTimestampTests
+    public class KStreamAlterRecordTimestampTests
     {
         [Test]
         public void ShouldNotAllowNullTimestampExtractorAction()
@@ -16,7 +16,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             var builder = new StreamBuilder();
             var stream = builder.Stream<string, string>("topic");
 
-            Assert.Throws<ArgumentNullException>(() => stream.WithRecordTimestamp(null));
+            Assert.Throws<ArgumentNullException>(() => stream.AlterRecordTimestamp(null));
         }
 
         [Test]
@@ -29,7 +29,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             data.Add(KeyValuePair.Create("key1", "123456"));
 
             builder.Stream<string, string>("topic")
-                .WithRecordTimestamp((k, v, _) => negativeTimestamp)
+                .AlterRecordTimestamp((k, v, _) => negativeTimestamp)
                 .To("output-topic");
 
             var config = new StreamConfig<StringSerDes, StringSerDes>();
@@ -63,7 +63,7 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             data.Add(KeyValuePair.Create("key1", "123456"));
 
             builder.Stream<string, string>("topic")
-                .WithRecordTimestamp((k, v, _) => customTimestamp)
+                .AlterRecordTimestamp((k, v, _) => customTimestamp)
                 .To("output-topic");
 
             var config = new StreamConfig<StringSerDes, StringSerDes>();
@@ -84,6 +84,31 @@ namespace Streamiz.Kafka.Net.Tests.Processors
                 var record = result[0];
                 Assert.AreEqual(customTimestamp, record.Message.Timestamp.UnixTimestampMs);
             }
+        }
+
+        [Test]
+        public void ObsoleteWithRecordTimestampStillAltersTimestamp()
+        {
+            var builder = new StreamBuilder();
+
+#pragma warning disable CS0618 // kept for backward compatibility
+            builder.Stream<string, string>("topic")
+                .WithRecordTimestamp((k, v, _) => 12345)
+                .To("output-topic");
+#pragma warning restore CS0618
+
+            var config = new StreamConfig<StringSerDes, StringSerDes>();
+            config.ApplicationId = "test-obsolete-with-record-timestamp";
+
+            using var driver = new TopologyTestDriver(builder.Build(), config);
+            var inputTopic = driver.CreateInputTopic<string, string>("topic");
+            var outputTopic = driver.CreateOutputTopic<string, string, StringSerDes, StringSerDes>("output-topic");
+
+            inputTopic.PipeInput("key1", "123456");
+            var result = outputTopic.ReadKeyValueList().ToList();
+
+            Assert.AreEqual(1, result.Count);
+            Assert.AreEqual(12345, result[0].Message.Timestamp.UnixTimestampMs);
         }
     }
 }

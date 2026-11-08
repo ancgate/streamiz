@@ -99,6 +99,11 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly Thread thread;
         private readonly IConsumer<byte[], byte[]> consumer;
         private TaskManager Manager { get; }
+
+        /// <summary>
+        /// Standby replicas of the instance, told when the tasks of this thread become active or are closed
+        /// </summary>
+        internal void UseStandbyTasks(IStandbyTasksListener standbyTasks) => Manager.StandbyTasks = standbyTasks;
         private readonly InternalTopologyBuilder builder;
         private readonly TimeSpan consumeTimeout;
         private readonly string threadId;
@@ -131,6 +136,10 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly Sensor punctuateRatioSensor;
         private readonly Sensor commitRatioSensor;
         private Exception exception;
+
+        // Records that failed and were skipped by the InnerExceptionHandler (CONTINUE).
+        // They are dropped when consumed again after the thread rejoins the group.
+        private readonly HashSet<(string Topic, int Partition, long Offset)> recordsToSkip = new();
 
         public event ThreadStateListener StateChanged;
 
@@ -217,8 +226,9 @@ namespace Streamiz.Kafka.Net.Processors
                                 break;
                             if (response == ExceptionHandlerResponse.CONTINUE)
                             {
+                                var failedException = exception;
                                 exception = null;
-                                HandleInnerException();
+                                HandleInnerException(failedException);
                             }
                         }
 
@@ -235,6 +245,9 @@ namespace Streamiz.Kafka.Net.Processors
                                 IEnumerable<ConsumeResult<byte[], byte[]>> records =
                                     new List<ConsumeResult<byte[], byte[]>>();
 
+                                // back-pressure of the async processors (AsyncProcessingMode.V2)
+                                Manager.PauseOrResumeAsyncSaturatedTasks();
+
                                 long pollLatency = ActionHelper.MeasureLatency(() =>
                                 {
                                     records = PollRequest(GetTimeout());
@@ -243,6 +256,9 @@ namespace Streamiz.Kafka.Net.Processors
 
                                 DateTime n = DateTime.Now;
                                 var count = AddToTasks(records);
+                                // at-most-once: commit the polled records before processing them
+                                if (count > 0 && streamConfig.Guarantee == ProcessingGuarantee.AT_MOST_ONCE)
+                                    Manager.CommitPolledOffsets(records);
                                 if (count > 0)
                                 {
                                     log.LogDebug($"Add {count} records in tasks in {DateTime.Now - n}");
@@ -409,13 +425,20 @@ namespace Streamiz.Kafka.Net.Processors
             }
         }
 
+        private static readonly TimeSpan AsyncWorkPollTimeout = TimeSpan.FromMilliseconds(5);
+
         private TimeSpan GetTimeout()
         {
             if (State == ThreadState.PARTITIONS_ASSIGNED || State == ThreadState.PARTITIONS_REVOKED ||
                 State == ThreadState.PENDING_SHUTDOWN)
                 return TimeSpan.Zero;
             if (State == ThreadState.RUNNING || State == ThreadState.STARTING)
+            {
+                // async calls in progress (AsyncProcessingMode.V2) : poll shortly to forward their results quickly
+                if (Manager.HasAsyncWork && consumeTimeout > AsyncWorkPollTimeout)
+                    return AsyncWorkPollTimeout;
                 return consumeTimeout;
+            }
 
             log.LogError("{LogPrefix}Unexpected state {State} during normal iteration", logPrefix, State);
             throw new StreamsException($"Unexpected state {State} during normal iteration");
@@ -427,6 +450,15 @@ namespace Streamiz.Kafka.Net.Processors
             foreach (var record in records)
             {
                 count++;
+
+                if (recordsToSkip.Count > 0 && recordsToSkip.Remove(FailedRecordInfo.Key(record)))
+                {
+                    log.LogWarning(
+                        "{LogPrefix}Skipping record (Topic:{Topic}|Partition:{Partition}|Offset:{Offset}) because it previously failed and the InnerExceptionHandler returned CONTINUE",
+                        logPrefix, record.Topic, record.Partition.Value, record.Offset.Value);
+                    continue;
+                }
+
                 var task = Manager.ActiveTaskFor(record.TopicPartition);
                 if (task != null)
                 {
@@ -498,11 +530,19 @@ namespace Streamiz.Kafka.Net.Processors
             consumer.Subscribe(builder.GetSourceTopics());
         }
 
-        private void HandleInnerException()
+        private void HandleInnerException(Exception innerException)
         {
             log.LogWarning(
                 "{LogPrefix}Detected that the thread throw an inner exception. Your configuration manager has decided to continue running stream processing. So will close out all assigned tasks and rejoin the consumer group",
                 logPrefix);
+
+            if (FailedRecordInfo.TryGet(innerException, out var failedRecord))
+            {
+                log.LogWarning(
+                    "{LogPrefix}The record which raised the exception (Topic:{Topic}|Partition:{Partition}|Offset:{Offset}) will be skipped",
+                    logPrefix, failedRecord.Topic, failedRecord.Partition, failedRecord.Offset);
+                recordsToSkip.Add(failedRecord);
+            }
 
             Manager.HandleLostAll();
             consumer.Unsubscribe();

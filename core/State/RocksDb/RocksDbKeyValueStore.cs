@@ -282,8 +282,19 @@ namespace Streamiz.Kafka.Net.State
             MetricsRecorder.Init(context.Metrics, context.Id);
             OpenDatabase(context);
 
-            // TODO : batch restoration behavior
-            context.Register(root, (k, v, t) => Put(k, v));
+            context.Register(root, (k, v, t) => Put(k, v), RestoreBatch);
+        }
+
+        /// <summary>
+        /// Restore a batch of changelog records in one RocksDB write batch (null values are deletes).
+        /// </summary>
+        internal void RestoreBatch(IReadOnlyList<(Bytes Key, byte[] Value, long Timestamp)> records)
+        {
+            CheckStateStoreOpen();
+            var entries = new List<KeyValuePair<Bytes, byte[]>>(records.Count);
+            foreach (var record in records)
+                entries.Add(new KeyValuePair<Bytes, byte[]>(record.Key, record.Value));
+            PutAll(entries);
         }
 
         /// <summary>

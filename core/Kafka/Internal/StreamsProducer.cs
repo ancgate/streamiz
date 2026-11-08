@@ -56,6 +56,7 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
             switch (config.Guarantee)
             {
                 case ProcessingGuarantee.AT_LEAST_ONCE:
+                case ProcessingGuarantee.AT_MOST_ONCE:
                     break;
                 case ProcessingGuarantee.EXACTLY_ONCE:
                     _producerConfig.TransactionalId = $"{config.ApplicationId}-{processId}-{threadId}";

@@ -100,7 +100,9 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 }
                 catch (Exception e)
                 {
-                    throw new StreamsException("Fatal error in Timestamp extractor callback", e);
+                    var exception = new StreamsException("Fatal error in Timestamp extractor callback", e);
+                    FailedRecordInfo.Attach(exception, record);
+                    throw exception;
                 }
 
                 log.LogDebug("");
@@ -129,7 +131,10 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 throw new ArgumentNullException("record.Message");
             if (sourceProcessor == null)
                 throw new ArgumentNullException("sourceProcessor");
-            
+
+            // the built-in extractors only read the record timestamp: no need to deserialize the key and value
+            bool deserialize = timestampExtractor is not ExtractRecordMetadataTimestamp;
+
             return new ConsumeResult<object, object>
             {
                 Topic = record.Topic,
@@ -140,8 +145,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                 {
                     Headers = record.Message.Headers,
                     Timestamp = record.Message.Timestamp,
-                    Key = sourceProcessor.DeserializeKey(record).Bean,
-                    Value = sourceProcessor.DeserializeValue(record).Bean
+                    Key = deserialize ? sourceProcessor.DeserializeKey(record, true).Bean : null,
+                    Value = deserialize ? sourceProcessor.DeserializeValue(record, true).Bean : null
                 },
                 Partition = record.Partition
             };

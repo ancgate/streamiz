@@ -17,6 +17,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             internal IStateStore Store { get; set; }
             internal TopicPartition ChangelogTopicPartition { get; set; }
             internal Action<ConsumeResult<byte[], byte[]>>  RestoreCallback { get; set; }
+            internal Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> BatchRestoreCallback { get; set; }
             internal Func<ConsumeResult<byte[], byte[]>, ConsumeResult<byte[], byte[]>> RecordConverter { get; set; }
 
             /// <summary>
@@ -98,6 +99,10 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         }
 
         public void Register(IStateStore store, Action<ConsumeResult<byte[], byte[]>>  callback)
+            => Register(store, callback, null);
+
+        public void Register(IStateStore store, Action<ConsumeResult<byte[], byte[]>> callback,
+            Action<IReadOnlyList<ConsumeResult<byte[], byte[]>>> batchCallback)
         {
             string storeName = store.Name;
             log.LogDebug("{LogPrefix}Registering state store {StoreName} to its state manager", logPrefix, storeName);
@@ -114,6 +119,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                     Store = store,
                     ChangelogTopicPartition = GetStorePartition(storeName),
                     RestoreCallback = callback,
+                    BatchRestoreCallback = batchCallback,
                     RecordConverter = StateManagerTools.ConverterForStore(store),
                     Offset = null
                 } :
@@ -283,11 +289,18 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             {
                 var listRecords = records.ToList();
                 long endOffset = listRecords[listRecords.Count - 1].Offset.Value;
-                var convertedRecords = records.Select(r => storeMetadata.RecordConverter(r));
+                var convertedRecords = listRecords.Select(r => storeMetadata.RecordConverter(r)).ToList();
 
-                // TODO : bach restoration behavior
-                foreach (var _record in convertedRecords)
-                    storeMetadata.RestoreCallback(_record);
+                storeMetadata.Store.MeasureRestore(() =>
+                {
+                    if (storeMetadata.BatchRestoreCallback != null)
+                        storeMetadata.BatchRestoreCallback(convertedRecords);
+                    else
+                    {
+                        foreach (var _record in convertedRecords)
+                            storeMetadata.RestoreCallback(_record);
+                    }
+                });
 
                 storeMetadata.Offset = endOffset;
             }

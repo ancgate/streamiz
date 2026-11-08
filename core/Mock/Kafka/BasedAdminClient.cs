@@ -23,7 +23,7 @@ namespace Streamiz.Kafka.Net.Mock.Kafka
             throw new NotImplementedException();
         }
 
-        public Task<List<DeleteRecordsResult>> DeleteRecordsAsync(IEnumerable<TopicPartitionOffset> topicPartitionOffsets, DeleteRecordsOptions options = null)
+        public virtual Task<List<DeleteRecordsResult>> DeleteRecordsAsync(IEnumerable<TopicPartitionOffset> topicPartitionOffsets, DeleteRecordsOptions options = null)
         {
             throw new NotImplementedException();
         }

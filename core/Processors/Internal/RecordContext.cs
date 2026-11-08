@@ -64,13 +64,18 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             
             List<(byte[], byte[])> byteHeaders = new();
             
-            foreach(var header in Headers)
+            if (Headers != null)
             {
-                size += 2 * sizeof(int); // size of key and value
-                size += header.Key.Length;
-                if (header.GetValueBytes() != null)
-                    size += header.GetValueBytes().Length;
-                byteHeaders.Add((Encoding.UTF8.GetBytes(header.Key), header.GetValueBytes()));
+                foreach (var header in Headers)
+                {
+                    var keyBytes = Encoding.UTF8.GetBytes(header.Key); // UTF-8 length can differ from Key.Length
+                    var valueBytes = header.GetValueBytes();
+                    size += 2 * sizeof(int); // size of key and value
+                    size += keyBytes.Length;
+                    if (valueBytes != null)
+                        size += valueBytes.Length;
+                    byteHeaders.Add((keyBytes, valueBytes));
+                }
             }
 
             var buffer = ByteBuffer.Build(size, true);

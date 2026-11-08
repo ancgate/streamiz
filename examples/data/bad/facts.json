@@ -1,0 +1,5 @@
+{
+  "records": 8,
+  "topic": "banking.transactions",
+  "note": "each line is {key, value, timestamp}: produce 'value' as the raw record value"
+}

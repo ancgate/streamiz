@@ -93,6 +93,75 @@ namespace Streamiz.Kafka.Net.Tests.Private
         }
 
         [Test]
+        public void RestoreInSeveralBatchesKeepsLastWriteIncludingDeletes()
+        {
+            var serdes = new StringSerDes();
+            byte[] Ser(string s) => serdes.Serialize(s, new SerializationContext());
+
+            var producer = supplier.GetProducer(config.ToProducerConfig());
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key1", "value1b"));
+            producer.Produce(changelogTopic, new Message<byte[], byte[]> {Key = Ser("key2"), Value = null});
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key3", "value3"));
+            producer.Produce(changelogTopic, new Message<byte[], byte[]> {Key = Ser("key3"), Value = null});
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key4", "value4"));
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key5", "value5"));
+            producer.Produce(changelogTopic, CreateMessage(changelogTopic, "key6", "value6"));
+
+            // dedicated state dir and reader: restore 2 records per batch (9 records => 5 batches, the last one
+            // has a single record, which must not be lost when the restoration completes).
+            var batchConfig = new StreamConfig<StringSerDes, StringSerDes>();
+            batchConfig.ApplicationId = "test-storechangelog-batch-app";
+            batchConfig.StateDir = Path.Combine(".", Guid.NewGuid().ToString());
+            batchConfig.PollMs = 100;
+            batchConfig.MaxPollRestoringRecords = 2;
+
+            var id = new TaskId {Id = 0, Partition = 0};
+            var batchRestoreManager = new StatestoreRestoreManager(null);
+            var batchReader = new StoreChangelogReader(batchConfig,
+                supplier.GetRestoreConsumer(batchConfig.ToConsumerConfig()), "thread-1", batchRestoreManager,
+                new StreamMetricsRegistry());
+            var batchStateMgr = new ProcessorStateManager(
+                id,
+                new TopicPartition("topic", 0).ToSingle(),
+                new Dictionary<string, string> {{"store", changelogTopic}},
+                batchReader,
+                new OffsetCheckpointFile(Path.Combine(batchConfig.StateDir, batchConfig.ApplicationId, "0-0")));
+            var task = new Mock<AbstractTask>();
+            task.Setup(t => t.Id).Returns(id);
+            var batchContext = new ProcessorContext(task.Object, batchConfig, batchStateMgr, new StreamMetricsRegistry());
+            var batchStore = new RocksDbKeyValueStore("store", "rocksdb");
+            batchStore.Init(batchContext, batchStore);
+
+            try
+            {
+                var changelog = new TopicPartition(changelogTopic, 0);
+                for (int i = 0; i < 10 && batchReader.GetMetadata(changelog)?.ChangelogState != ChangelogState.COMPLETED; ++i)
+                    batchReader.Restore();
+
+                var metadata = batchReader.GetMetadata(changelog);
+                Assert.AreEqual(ChangelogState.COMPLETED, metadata.ChangelogState);
+                Assert.AreEqual(9, metadata.TotalRestored);
+
+                var content = batchStore.All()
+                    .ToDictionary(kv => serdes.Deserialize(kv.Key.Get, new SerializationContext()),
+                        kv => serdes.Deserialize(kv.Value, new SerializationContext()));
+                CollectionAssert.AreEquivalent(new Dictionary<string, string>
+                {
+                    {"key1", "value1b"},
+                    {"key4", "value4"},
+                    {"key5", "value5"},
+                    {"key6", "value6"}
+                }, content);
+            }
+            finally
+            {
+                batchStateMgr.Close();
+                batchReader.Clear();
+                Directory.Delete(batchConfig.StateDir, true);
+            }
+        }
+
+        [Test]
         public void RestoreComplete()
         {
             storeChangelogReader.Restore();

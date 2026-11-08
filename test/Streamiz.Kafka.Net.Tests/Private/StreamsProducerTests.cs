@@ -32,6 +32,25 @@ public class StreamsProducerTests
     }
     
     [Test]
+    public void AtMostOnceProducerHasNoTransaction()
+    {
+        var kafkaSupplier = new SyncKafkaSupplier();
+        var streamConfig = new StreamConfig();
+        streamConfig.Guarantee = ProcessingGuarantee.AT_MOST_ONCE;
+
+        StreamsProducer streamsProducer = new StreamsProducer(
+            streamConfig,
+            "thread-1",
+            Guid.NewGuid(),
+            kafkaSupplier,
+            "log-1");
+
+        Assert.IsFalse(streamsProducer.EosEnabled);
+        Assert.Throws<IllegalStateException>(() => streamsProducer.InitTransaction());
+        Assert.Throws<IllegalStateException>(() => streamsProducer.CommitTransaction(null, null));
+    }
+
+    [Test]
     public void ThrowKafkaRetriableExceptionWhenInitTransaction()
     {
         var options = new ProducerSyncExceptionOptions()

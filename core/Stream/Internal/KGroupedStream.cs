@@ -143,6 +143,32 @@ namespace Streamiz.Kafka.Net.Stream.Internal
                 builder);   
         }
 
+        public ITimeWindowedKStream<K, V> WindowedBy(SlidingWindowOptions options)
+        {
+            return new SlidingWindowedKStream<K, V>(
+                options,
+                aggregateBuilder,
+                NameNode,
+                KeySerdes,
+                ValueSerdes,
+                SetSourceNodes,
+                Node,
+                builder);
+        }
+
+        public ISessionWindowedKStream<K, V> WindowedBy(SessionWindowOptions options)
+        {
+            return new SessionWindowedKStream<K, V>(
+                options,
+                aggregateBuilder,
+                NameNode,
+                KeySerdes,
+                ValueSerdes,
+                SetSourceNodes,
+                Node,
+                builder);
+        }
+
         #endregion
 
         #endregion

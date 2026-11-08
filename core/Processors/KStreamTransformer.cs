@@ -30,7 +30,17 @@ namespace Streamiz.Kafka.Net.Processors
             var newRecord = transformer.Process(record);
             if (newRecord != null)
             {
-                Context.SetHeaders(newRecord.Headers);
+                if (newRecord.HeadersProvided)
+                    Context.SetHeaders(newRecord.Headers);
+                else if (newRecord.Headers is {Count: > 0})
+                {
+                    // record created without headers: it keeps the headers of the processed record,
+                    // and the headers added to the new record are appended to them
+                    var headers = Context.RecordContext.Headers.Clone();
+                    foreach (var header in newRecord.Headers)
+                        headers.Add(header.Key, header.GetValueBytes());
+                    Context.SetHeaders(headers);
+                }
                 
                 if (changeKey)
                     Forward(newRecord.Key, newRecord.Value);

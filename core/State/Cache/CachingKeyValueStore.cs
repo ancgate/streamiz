@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
 using Streamiz.Kafka.Net.Crosscutting;
 using Streamiz.Kafka.Net.Metrics;
 using Streamiz.Kafka.Net.Metrics.Internal;
@@ -8,6 +9,7 @@ using Streamiz.Kafka.Net.State.Cache.Enumerator;
 using Streamiz.Kafka.Net.State.Cache.Internal;
 using Streamiz.Kafka.Net.State.Enumerator;
 using Streamiz.Kafka.Net.State.Internal;
+using Streamiz.Kafka.Net.State.Logging;
 using Streamiz.Kafka.Net.Table;
 using Streamiz.Kafka.Net.Table.Internal;
 
@@ -18,6 +20,7 @@ namespace Streamiz.Kafka.Net.State.Cache
         IKeyValueStore<Bytes, byte[]>,
         ICachedStateStore<byte[], byte[]>
     {
+        private static readonly ILogger logger = Logger.GetLogger(typeof(CachingKeyValueStore));
         private readonly CacheSize _cacheSize;
         private Action<KeyValuePair<byte[], Change<byte[]>>> flushListener;
         private bool sendOldValue;
@@ -59,10 +62,13 @@ namespace Streamiz.Kafka.Net.State.Cache
             cachingEnabled = context.Configuration.DefaultStateStoreCacheMaxBytes > 0 ||
                              _cacheSize is { CacheSizeBytes: > 0 };
             if(cachingEnabled)
+            {
                 Cache = new MemoryCache<Bytes, CacheEntryValue>(new MemoryCacheOptions {
                     SizeLimit = _cacheSize is { CacheSizeBytes: > 0 } ? _cacheSize.CacheSizeBytes :  context.Configuration.DefaultStateStoreCacheMaxBytes,
                     CompactionPercentage = .20
                 }, new BytesComparer());
+                Cache.BatchEvictionCallback = CacheEntriesEviction;
+            }
         }
 
         private byte[] GetInternal(Bytes key)
@@ -135,6 +141,72 @@ namespace Streamiz.Kafka.Net.State.Cache
             totalCacheSizeSensor.Record(Cache.Size);
         }
         
+        // The dirty entries evicted by one compaction (flush, or cache over capacity) are written to the wrapped store
+        // in one batch, then forwarded one by one in eviction order, with the same old and new values as CacheEntryEviction.
+        private void CacheEntriesEviction(IReadOnlyList<EvictedCacheEntry<Bytes, CacheEntryValue>> entries)
+        {
+            var toWrite = new List<KeyValuePair<Bytes, byte[]>>(entries.Count);
+            var recordContexts = new List<IRecordContext>(entries.Count);
+            var changes = new List<Change<byte[]>>(entries.Count);
+
+            foreach (var entry in entries)
+            {
+                if (entry.Reason is EvictionReason.Replaced or EvictionReason.None) continue;
+
+                byte[] rawNewValue = entry.Value.Value;
+                if (flushListener != null)
+                {
+                    // the keys of a batch are distinct: the old values can all be read before the batch write
+                    byte[] rawOldValue = rawNewValue == null || sendOldValue ? wrapped.Get(entry.Key) : null;
+
+                    // this is an optimization: if this key did not exist in underlying store and also not in the cache,
+                    // we can skip flushing to downstream as well as writing to underlying store
+                    if (rawNewValue == null && rawOldValue == null)
+                        continue;
+
+                    changes.Add(new Change<byte[]>(sendOldValue ? rawOldValue : null, rawNewValue));
+                }
+
+                toWrite.Add(new KeyValuePair<Bytes, byte[]>(entry.Key, rawNewValue));
+                recordContexts.Add(entry.Value.Context);
+            }
+
+            if (toWrite.Count == 0)
+                return;
+
+            var currentContext = context.RecordContext;
+            try
+            {
+                if (wrapped is ChangeLoggingKeyValueBytesStore loggingStore)
+                    loggingStore.PutAll(toWrite, recordContexts); // each changelog record keeps the context of its entry
+                else
+                    wrapped.PutAll(toWrite);
+
+                if (flushListener != null)
+                {
+                    for (int i = 0; i < toWrite.Count; ++i)
+                    {
+                        context.SetRecordMetaData(recordContexts[i]);
+                        try
+                        {
+                            flushListener(new KeyValuePair<byte[], Change<byte[]>>(toWrite[i].Key.Get, changes[i]));
+                        }
+                        catch (Exception e)
+                        {
+                            // as with the eviction callback of one entry, the other entries are still forwarded
+                            logger.LogError(e, "Failed to forward the evicted entry of the cache of store {StoreName}", Name);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                context.SetRecordMetaData(currentContext);
+            }
+
+            totalCacheSizeSensor.Record(Cache.Size);
+        }
+
         public override void Flush()
         {
             if (cachingEnabled)

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Streamiz.Examples.Common\Streamiz.Examples.Common.csproj" />
+    <ProjectReference Include="..\..\..\metrics\Streamiz.Kafka.Net.Metrics.Prometheus\Streamiz.Kafka.Net.Metrics.Prometheus.csproj" />
+    <ProjectReference Include="..\..\..\metrics\Streamiz.Kafka.Net.Metrics.OpenTelemetry\Streamiz.Kafka.Net.Metrics.OpenTelemetry.csproj" />
+  </ItemGroup>
+
+</Project>

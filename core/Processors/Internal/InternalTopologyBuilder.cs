@@ -31,6 +31,12 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         private readonly IList<string> requestTopics = new List<string>();
         private readonly ISet<string> globalTopics = new HashSet<string>();
         private readonly IDictionary<string, int?> internalTopics = new Dictionary<string, int?>();
+        // async processors (MapAsync, ...): request sink, request source, async processor and request topic,
+        // the request part is removed when the async processing mode is V2 (see RewriteTopology)
+        private readonly IList<(string RequestSink, string RequestSource, string AsyncProcessor, string RequestTopic)> asyncRequests =
+            new List<(string, string, string, string)>();
+        // internal topic -> source nodes whose topics it must be co-partitioned with
+        private readonly IDictionary<string, ISet<string>> internalTopicsCopartitionedWith = new Dictionary<string, ISet<string>>();
 
         private readonly QuickUnion<string> nodeGrouper = new QuickUnion<string>();
         private IDictionary<int, ISet<string>> nodeGroups = new Dictionary<int, ISet<string>>();
@@ -246,6 +252,29 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         {
             if(!internalTopics.ContainsKey(repartitionTopic)) 
                 internalTopics.Add(repartitionTopic, numberPartitions);
+        }
+
+        /// <summary>
+        /// Add an internal topic which must have the same number of partitions as the topics of <paramref name="copartitionedWithSourceNodes"/>.
+        /// </summary>
+        internal void AddInternalTopic(string repartitionTopic, int? numberPartitions, IEnumerable<string> copartitionedWithSourceNodes)
+        {
+            AddInternalTopic(repartitionTopic, numberPartitions);
+            if (copartitionedWithSourceNodes != null)
+                internalTopicsCopartitionedWith[repartitionTopic] = new HashSet<string>(copartitionedWithSourceNodes);
+        }
+
+        private IList<string> CopartitionedWithTopics(string internalTopic)
+        {
+            if (!internalTopicsCopartitionedWith.TryGetValue(internalTopic, out var sourceNodes))
+                return new List<string>();
+
+            return sourceNodes
+                .Select(n => nodeFactories.TryGetValue(n, out var factory) ? factory as ISourceNodeFactory : null)
+                .Where(f => f?.Topic != null)
+                .Select(f => internalTopics.ContainsKey(f.Topic) ? DecorateTopic(f.Topic) : f.Topic)
+                .Distinct()
+                .ToList();
         }
         
         private void ValidateTopicNotAlreadyRegistered(string topicName)
@@ -498,8 +527,43 @@ namespace Streamiz.Kafka.Net.Processors.Internal
             }
         }
 
+        /// <summary>
+        /// Register the request part of an async processor: request sink -> request topic -> request source -> async processor.
+        /// </summary>
+        internal void RegisterAsyncRequest(string requestSink, string requestSource, string asyncProcessor, string requestTopic)
+            => asyncRequests.Add((requestSink, requestSource, asyncProcessor, requestTopic));
+
+        // AsyncProcessingMode.V2 : the async processors run inside the stream tasks, so the request topics, the request sinks
+        // and sources are removed and each async processor is connected to the parents of its request sink.
+        // The response topic (if any) is kept : the streams built from the async processors (partitioning, co-partitioning)
+        // are the same in both modes.
+        private void RewriteAsyncProcessorsInTask()
+        {
+            foreach (var asyncRequest in asyncRequests)
+            {
+                if (!nodeFactories.TryGetValue(asyncRequest.RequestSink, out var requestSink) ||
+                    !nodeFactories.TryGetValue(asyncRequest.AsyncProcessor, out var asyncProcessor))
+                    continue;
+
+                var parents = requestSink.Previous;
+                asyncProcessor.Previous = parents;
+                nodeFactories.Remove(asyncRequest.RequestSink);
+                nodeFactories.Remove(asyncRequest.RequestSource);
+                requestTopics.Remove(asyncRequest.RequestTopic);
+                internalTopics.Remove(asyncRequest.RequestTopic);
+                nodeGrouper.Unite(asyncRequest.AsyncProcessor, parents);
+            }
+
+            asyncRequests.Clear();
+            ExternalCall = requestTopics.Any();
+            nodeGroups = null;
+        }
+
         internal void RewriteTopology(IStreamConfig config)
         {
+            if (config.AsyncProcessingMode == AsyncProcessingMode.V2)
+                RewriteAsyncProcessorsInTask();
+
             foreach (var storeBuilder in globalStateBuilders.Values)
             {
                 GlobalStateStores.Add(storeBuilder.Name, storeBuilder.Build(config));
@@ -543,6 +607,60 @@ namespace Streamiz.Kafka.Net.Processors.Internal
         #endregion
 
         #region Make Groups
+
+        /// <summary>
+        /// Source topics (decorated) and state stores of each sub-topology, global ones excluded (interactive queries metadata)
+        /// </summary>
+        internal IDictionary<int, (ISet<string> SourceTopics, ISet<string> StateStores)> SubTopologiesSourceTopicsAndStores()
+        {
+            var result = new Dictionary<int, (ISet<string> SourceTopics, ISet<string> StateStores)>();
+            foreach (var group in NodeGroups())
+            {
+                if (group.Value.Any(IsGlobalSource))
+                    continue;
+
+                var topics = new HashSet<string>();
+                var stores = new HashSet<string>();
+                foreach (var node in group.Value)
+                {
+                    if (!nodeFactories.TryGetValue(node, out var factory))
+                        continue;
+
+                    switch (factory)
+                    {
+                        case ISourceNodeFactory source when source.Topic != null:
+                            topics.Add(internalTopics.ContainsKey(source.Topic) ? DecorateTopic(source.Topic) : source.Topic);
+                            break;
+                        case IProcessorNodeFactory processor:
+                            foreach (var store in processor.StateStores)
+                                stores.Add(store);
+                            break;
+                    }
+                }
+
+                result[group.Key] = (topics, stores);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Source topics of the sub-topologies with at least one store backed by a changelog topic : their tasks can have
+        /// standby replicas
+        /// </summary>
+        internal IDictionary<int, ISet<string>> StatefulSubTopologiesSourceTopics()
+            => SubTopologiesSourceTopicsAndStores()
+                .Where(s => s.Value.StateStores.Any(HasChangelog))
+                .ToDictionary(s => s.Key, s => s.Value.SourceTopics);
+
+        private bool HasChangelog(string storeName)
+            => storesToTopics.ContainsKey(storeName) ||
+               (stateFactories.TryGetValue(storeName, out var factory) && factory.LoggingEnabled);
+
+        /// <summary>
+        /// Names of the global state stores
+        /// </summary>
+        internal IEnumerable<string> GlobalStateStoreNames => globalStateBuilders.Keys;
 
         internal IDictionary<int, ISet<string>> NodeGroups()
         {
@@ -608,7 +726,8 @@ namespace Streamiz.Kafka.Net.Processors.Internal
                                 {Name = internalTopic, NumberPartitions = internalTopicPartition.Value});
                     else
                         repartitionTopics.AddIfNotExist(internalTopic,
-                            new RepartitionTopicConfig() {Name = internalTopic});
+                            new RepartitionTopicConfig()
+                                {Name = internalTopic, CopartitionedWithTopics = CopartitionedWithTopics(topic)});
                     return internalTopic;
                 }
 
@@ -742,6 +861,16 @@ namespace Streamiz.Kafka.Net.Processors.Internal
 
         private InternalTopicConfig CreateChangelogTopicConfig(StateStoreFactory stateStoreFactory, string changelogTopic)
         {
+            if (stateStoreFactory.IsVersionedStore)
+            {
+                return new VersionedChangelogTopicConfig
+                {
+                    Configs = stateStoreFactory.LogConfig,
+                    Name = changelogTopic,
+                    HistoryRetentionMs = stateStoreFactory.HistoryRetentionMs
+                };
+            }
+
             if (stateStoreFactory.IsWindowStore)
             {
                 var windowChangelogTopicConfig = new WindowedChangelogTopicConfig

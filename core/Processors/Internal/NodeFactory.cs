@@ -20,7 +20,7 @@ namespace Streamiz.Kafka.Net.Processors.Internal
     internal abstract class NodeFactory : INodeFactory
     {
         public string Name { get; }
-        public string[] Previous { get; }
+        public string[] Previous { get; internal set; }
 
         protected NodeFactory(string name, string[] previous)
         {

@@ -32,7 +32,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Logging.Log4Net.AspNetCore" Version="7.0.0" />
     <PackageReference Include="Moq" Version="4.14.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="nunit" Version="3.12.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="3.15.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" />
@@ -42,6 +42,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\core\Streamiz.Kafka.Net.csproj" />
     <ProjectReference Include="..\..\remote\Streamiz.Kafka.Net.Azure.RemoteStorage\Streamiz.Kafka.Net.Azure.RemoteStorage.csproj" />
+    <ProjectReference Include="..\..\remote\Streamiz.Kafka.Net.Gcp.RemoteStorage\Streamiz.Kafka.Net.Gcp.RemoteStorage.csproj" />
+    <ProjectReference Include="..\..\remote\Streamiz.Kafka.Net.Aws.RemoteStorage\Streamiz.Kafka.Net.Aws.RemoteStorage.csproj" />
+    <ProjectReference Include="..\..\remote\Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage\Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage.csproj" />
+    <ProjectReference Include="..\..\remote\Streamiz.Kafka.Net.MongoDb.RemoteStorage\Streamiz.Kafka.Net.MongoDb.RemoteStorage.csproj" />
     <ProjectReference Include="..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Avro\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Avro.csproj" />
     <ProjectReference Include="..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Json\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Json.csproj" />
     <ProjectReference Include="..\..\serdes\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Protobuf\Streamiz.Kafka.Net.SchemaRegistry.SerDes.Protobuf.csproj" />

@@ -367,7 +367,9 @@ namespace Streamiz.Kafka.Net
 
             materialized = materialized ?? Materialized<K, V, IKeyValueStore<Bytes, byte[]>>.Create();
             
-            var consumedInternal = new ConsumedInternal<K, V>(named, keySerdes, valueSerdes, extractor);
+            // without explicit serdes, the topic is read with the serdes of the materialized store (like Kafka Streams)
+            var consumedInternal = new ConsumedInternal<K, V>(named, keySerdes ?? materialized.KeySerdes,
+                valueSerdes ?? materialized.ValueSerdes, extractor);
             materialized.UseProvider(internalStreamBuilder, $"{topic}-").InitConsumed(consumedInternal);
 
             return internalStreamBuilder.Table(topic, consumedInternal, materialized);
@@ -631,7 +633,9 @@ namespace Streamiz.Kafka.Net
         {
             materialized = materialized ?? Materialized<K, V, IKeyValueStore<Bytes, byte[]>>.Create();
 
-            var consumedInternal = new ConsumedInternal<K, V>(named, keySerdes, valueSerdes, extractor);
+            // without explicit serdes, the topic is read with the serdes of the materialized store (like Kafka Streams)
+            var consumedInternal = new ConsumedInternal<K, V>(named, keySerdes ?? materialized.KeySerdes,
+                valueSerdes ?? materialized.ValueSerdes, extractor);
             materialized.UseProvider(internalStreamBuilder, $"{topic}-")?.InitConsumed(consumedInternal);
 
             return internalStreamBuilder.GlobalTable(topic, consumedInternal, materialized);

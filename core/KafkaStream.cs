@@ -4,6 +4,7 @@ using Streamiz.Kafka.Net.Kafka;
 using Streamiz.Kafka.Net.Kafka.Internal;
 using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.Processors.Internal;
+using Streamiz.Kafka.Net.SerDes;
 using Streamiz.Kafka.Net.State.Internal;
 using Streamiz.Kafka.Net.Stream;
 using Streamiz.Kafka.Net.Stream.Internal;
@@ -24,6 +25,10 @@ using ThreadState = Streamiz.Kafka.Net.Processors.ThreadState;
 [assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Metrics.Prometheus, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
 [assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Metrics.OpenTelemetry, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
 [assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Azure.RemoteStorage, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
+[assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Gcp.RemoteStorage, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
+[assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Aws.RemoteStorage, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
+[assembly: InternalsVisibleTo("Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
+[assembly: InternalsVisibleTo("Streamiz.Kafka.Net.MongoDb.RemoteStorage, PublicKey=00240000048000009400000006020000002400005253413100040000010001000d9d4a8e90a3b987f68f047ec499e5a3405b46fcad30f52abadefca93b5ebce094d05976950b38cc7f0855f600047db0a351ede5e0b24b9d5f1de6c59ab55dee145da5d13bb86f7521b918c35c71ca5642fc46ba9b04d4900725a2d4813639ff47898e1b762ba4ccd5838e2dd1e1664bd72bf677d872c87749948b1174bd91ad")]
 [assembly: InternalsVisibleTo("DynamicProxyGenAssembly2, PublicKey=0024000004800000940000000602000000240000525341310004000001000100c547cac37abd99c8db225ef2f6c8a3602f3b3606cc9891605d02baa56104f4cfc0734aa39b93bf7852f7d9266654753cc297e7d2edfe0bac1cdcf9f717241550e0a7b191195b7667bb4f64bcb8e2121380fd1d9d46ad2d92d2d15605093924cceaf74c4861eff62abf69b9291ed0a340e113be11e6a7d3113e92484cf7045cc7")]
 
 namespace Streamiz.Kafka.Net
@@ -292,8 +297,12 @@ namespace Streamiz.Kafka.Net
         private readonly StatestoreRestoreManager statestoreRestoreManager;
 
         private readonly CancellationTokenSource _cancelSource = new();
+        private readonly ILoggerFactory loggerFactory;
+        private readonly ILoggerFactory previousLoggerFactory;
         private readonly SequentiallyGracefullyShutdownHook shutdownHook;
         private readonly Guid processId;
+        private readonly StreamsMetadataManager metadataManager;
+        private readonly StandbyTasksManager standbyTasksManager;
 
         internal State StreamState { get; private set; }
 
@@ -329,7 +338,8 @@ namespace Streamiz.Kafka.Net
             this.topology = topology;
             this.kafkaSupplier = kafkaSupplier;
             this.configuration = configuration;
-            Logger.LoggerFactory = configuration.Logger;
+            loggerFactory = configuration.Logger;
+            previousLoggerFactory = Logger.Use(loggerFactory);
             statestoreRestoreManager = new StatestoreRestoreManager(this);
             
             logger = Logger.GetLogger(typeof(KafkaStream));
@@ -339,6 +349,9 @@ namespace Streamiz.Kafka.Net
             {
                 throw new StreamConfigException($"Stream configuration is not correct. Please set ApplicationId and BootstrapServers as minimal.");
             }
+
+            // application.server must be a host:port pair (checked before creating any client)
+            HostInfo.Parse(configuration.ApplicationServer);
 
             logPrefix = $"stream-application[{configuration.ApplicationId}] ";
             metricsRegistry = new StreamMetricsRegistry(clientId, configuration.MetricsRecording);
@@ -474,8 +487,33 @@ namespace Streamiz.Kafka.Net
                 t.StateChanged += manager.OnChange;
             }
 
+            // standby replicas of the stateful tasks of the other instances
+            if (configuration.NumStandbyReplicas > 0)
+            {
+                standbyTasksManager = new StandbyTasksManager(
+                    clientId,
+                    configuration,
+                    this.kafkaSupplier,
+                    topology.Builder,
+                    metricsRegistry,
+                    LocalActiveTasks);
+                foreach (var t in threads.OfType<StreamThread>())
+                    t.UseStandbyTasks(standbyTasksManager);
+                stateStoreProviders.Add(new StandbyTasksStateStoreProvider(standbyTasksManager, topology.Builder));
+            }
+
             var globalStateStoreProvider = new GlobalStateStoreProvider(topology.Builder.GlobalStateStores);
             queryableStoreProvider = new QueryableStoreProvider(stateStoreProviders, globalStateStoreProvider);
+
+            // interactive queries metadata
+            metadataManager = new StreamsMetadataManager(
+                processId.ToString(),
+                configuration,
+                this.kafkaSupplier,
+                clientId,
+                topology.Builder,
+                threads,
+                standbyTasksManager);
 
             StreamState = State.CREATED;
 
@@ -541,6 +579,9 @@ namespace Streamiz.Kafka.Net
                     {
                         t.Start(_cancelSource.Token);
                     }
+
+                    metadataManager.Start();
+                    standbyTasksManager?.Start();
                     
                     RunMiddleware(false, true);
                 }
@@ -570,6 +611,8 @@ namespace Streamiz.Kafka.Net
             Close();
             _cancelSource.Dispose();
             _disposed = true;
+            // the logger factory of this stream's configuration is not used by later streams once it's disposed
+            Logger.Restore(loggerFactory, previousLoggerFactory);
         }
 
         /// <summary>
@@ -587,6 +630,10 @@ namespace Streamiz.Kafka.Net
             else
             {
                 RunMiddleware(true, false);
+
+                // publish the tombstone of this instance first, so the other instances stop routing queries here
+                metadataManager.Dispose();
+                standbyTasksManager?.Dispose();
                 
                 shutdownHook.Shutdown();
 
@@ -615,6 +662,86 @@ namespace Streamiz.Kafka.Net
             return queryableStoreProvider.GetStore(storeQueryParameters);
         }
 
+
+        #region Interactive queries metadata
+
+        /// <summary>
+        /// Metadata of all the instances of the application which are alive : their endpoint (<see cref="IStreamConfig.ApplicationServer"/>),
+        /// and the state stores and partitions of their tasks. The other instances are only known when <see cref="IStreamConfig.ApplicationServer"/>
+        /// is set; otherwise only this instance is returned, with <see cref="HostInfo.Unavailable"/>.
+        /// The metadata of the other instances can lag behind a rebalance by a few hundred milliseconds.
+        /// </summary>
+        /// <returns>the metadata of the instances</returns>
+        /// <exception cref="IllegalStateException">if the stream is not running or rebalancing</exception>
+        public IEnumerable<StreamsMetadata> AllMetadata()
+        {
+            ValidateIsRunning();
+            return metadataManager.State.AllMetadata();
+        }
+
+        /// <summary>
+        /// Metadata of the instances which host <paramref name="storeName"/> (every instance for a global store).
+        /// </summary>
+        /// <param name="storeName">name of the state store</param>
+        /// <returns>the metadata of the instances which host the store</returns>
+        /// <exception cref="IllegalStateException">if the stream is not running or rebalancing</exception>
+        public IEnumerable<StreamsMetadata> AllMetadataForStore(string storeName)
+        {
+            ValidateIsRunning();
+            return metadataManager.State.AllMetadataForStore(storeName);
+        }
+
+        /// <summary>
+        /// Find the instance which hosts <paramref name="key"/> in the store <paramref name="storeName"/> : the key is serialized with
+        /// <paramref name="keySerializer"/> and its partition is computed with the producer partitioner (<see cref="StreamConfig.Partitioner"/>,
+        /// murmur2 by default, like the Java producer), on the number of partitions of the store's source topic.
+        /// It assumes the key was produced in the source topic with that partitioner; otherwise use
+        /// <see cref="QueryMetadataForKey{K}(string, K, Func{string, K, int, int})"/>.
+        /// </summary>
+        /// <param name="storeName">name of the state store</param>
+        /// <param name="key">key</param>
+        /// <param name="keySerializer">serializer of the key, the same as the store's source topic</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <returns>the instance of the active task, the instances of its standby tasks and the partition, or
+        /// <see cref="KeyQueryMetadata.NotAvailable"/> if they are not known (unknown store, partitions of the topic unknown,
+        /// random partitioner)</returns>
+        /// <exception cref="IllegalStateException">if the stream is not running or rebalancing</exception>
+        public KeyQueryMetadata QueryMetadataForKey<K>(string storeName, K key, ISerDes<K> keySerializer)
+        {
+            ValidateIsRunning();
+            return metadataManager.State.QueryMetadataForKey(storeName, key, keySerializer, metadataManager.ProducerPartitioner);
+        }
+
+        /// <summary>
+        /// Find the instance which hosts <paramref name="key"/> in the store <paramref name="storeName"/>, with a custom partitioner.
+        /// </summary>
+        /// <param name="storeName">name of the state store</param>
+        /// <param name="key">key</param>
+        /// <param name="partitioner">partition of the key for (source topic, key, number of partitions)</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <returns>the instance of the active task, the instances of its standby tasks and the partition, or
+        /// <see cref="KeyQueryMetadata.NotAvailable"/> if they are not known</returns>
+        /// <exception cref="IllegalStateException">if the stream is not running or rebalancing</exception>
+        public KeyQueryMetadata QueryMetadataForKey<K>(string storeName, K key, Func<string, K, int, int> partitioner)
+        {
+            ValidateIsRunning();
+            return metadataManager.State.QueryMetadataForKey(storeName, key, partitioner);
+        }
+
+        /// <summary>
+        /// Metadata of the local stream threads and their tasks.
+        /// </summary>
+        /// <returns>the metadata of the local stream threads</returns>
+        public IEnumerable<ThreadMetadata> MetadataForLocalThreads()
+            => metadataManager.LocalSnapshot().Threads
+                .Select(t => new ThreadMetadata(
+                    t.ThreadName,
+                    t.State,
+                    t.ActiveTasks.Select(task => new TaskMetadata(task.TaskId, task.TopicPartitions.Select(p => p.ToTopicPartition()))),
+                    t.StandbyTasks.Select(task => new TaskMetadata(task.TaskId, task.TopicPartitions.Select(p => p.ToTopicPartition())))))
+                .ToList();
+
+        #endregion
 
         /// <summary>
         /// Get read-only handle on global sensors registry, including streams client's own sensors plus
@@ -696,6 +823,36 @@ namespace Streamiz.Kafka.Net
             var adminClientInternalTopicManager = kafkaSupplier.GetAdmin(configuration.ToAdminConfig(StreamThread.GetSharedAdminClientId($"{configuration.ApplicationId.ToLower()}-admin-internal-topic-manager")));
             using var internalTopicManager = new DefaultTopicManager(configuration, adminClientInternalTopicManager);
             await InternalTopicManagerUtils.New(configuration).CreateInternalTopicsAsync(internalTopicManager, topology.Builder, configuration.AllowAutoCreateTopics ?? false);
+
+            // metadata topic of the interactive queries : compacted, one partition
+            if (metadataManager.Enabled)
+                await internalTopicManager.ApplyAsync(-1, new Dictionary<string, InternalTopicConfig>
+                {
+                    {
+                        metadataManager.MetadataTopic,
+                        new UnwindowedChangelogTopicConfig {Name = metadataManager.MetadataTopic, NumberPartitions = 1}
+                    }
+                }, configuration.AllowAutoCreateTopics ?? false);
+        }
+
+        // active tasks of the threads of this instance
+        private ISet<TaskId> LocalActiveTasks()
+        {
+            var tasks = new HashSet<TaskId>();
+            foreach (var t in threads)
+            {
+                try
+                {
+                    foreach (var task in t.ActiveTasks)
+                        tasks.Add(task.Id);
+                }
+                catch (Exception e) when (e is NotSupportedException or InvalidOperationException)
+                {
+                    // not a stream thread, or its tasks are changing
+                }
+            }
+
+            return tasks;
         }
 
         private void RunMiddleware(bool before, bool start)

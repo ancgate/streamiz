@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -291,6 +292,91 @@ namespace Streamiz.Kafka.Net.Tests.Processors
             input.PipeInput("key1", "value1");
             Thread.Sleep(1000);
             Assert.IsTrue(driver.IsError);
+        }
+
+        [Test]
+        public void KStreamMapAsyncInnerExceptionHandlerContinueSkipsPoisonRecord()
+        {
+            int poisonCalls = 0, handlerCalls = 0;
+            using var driver = BuildTopology((builder) =>
+                {
+                    var stream = builder.Stream<string, string>("input");
+                    stream
+                        .MapAsync(
+                            async (record, _) =>
+                            {
+                                if (record.Value == "poison")
+                                {
+                                    Interlocked.Increment(ref poisonCalls);
+                                    throw new InvalidOperationException("poison record");
+                                }
+                                return await Task.FromResult(
+                                    new KeyValuePair<string, string>(record.Key, record.Value.ToUpper()));
+                            },
+                            RetryPolicy.NewBuilder().Build())
+                        .To("output");
+                },
+                TopologyTestDriver.Mode.ASYNC_CLUSTER_IN_MEMORY,
+                (conf) => conf.InnerExceptionHandler = _ =>
+                {
+                    Interlocked.Increment(ref handlerCalls);
+                    return ExceptionHandlerResponse.CONTINUE;
+                });
+            var input = driver.CreateInputTopic<string, string>("input");
+            var output = driver.CreateOutputTopic<string, string>("output");
+            input.PipeInput("key1", "a");
+            input.PipeInput("key2", "poison");
+            input.PipeInput("key3", "b");
+
+            var values = IntegrationTestUtils
+                .WaitUntilMinKeyValueRecordsReceived(output, 2, TimeSpan.FromSeconds(10))
+                .Select(r => r.Message.Value)
+                .ToList();
+            Thread.Sleep(1000);
+            values.AddRange(output.ReadKeyValueList().Select(r => r.Message.Value));
+
+            CollectionAssert.Contains(values, "A");
+            CollectionAssert.Contains(values, "B");
+            Assert.AreEqual(1, poisonCalls);
+            Assert.AreEqual(1, handlerCalls);
+        }
+
+        [Test]
+        public void KStreamMapAsyncBufferedKeepsOrderAndDoesNotLoseRecords()
+        {
+            int firstCalls = 0;
+            using var driver = BuildTopology((builder) =>
+            {
+                var stream = builder.Stream<string, string>("input");
+                stream
+                    .MapAsync(
+                        async (record, _) =>
+                        {
+                            // the first record fails several times past the retry policy, so it goes to the buffer
+                            if (record.Value == "v1" && Interlocked.Increment(ref firstCalls) <= 6)
+                                throw new StreamsException("Exception");
+                            return await Task.FromResult(
+                                new KeyValuePair<string, string>(record.Key, record.Value.ToUpper()));
+                        },
+                        RetryPolicy
+                            .NewBuilder()
+                            .RetriableException<StreamsException>()
+                            .NumberOfRetry(1)
+                            .RetryBackOffMs(1)
+                            .RetryBehavior(EndRetryBehavior.BUFFERED)
+                            .Build())
+                    .To("output");
+            }, TopologyTestDriver.Mode.ASYNC_CLUSTER_IN_MEMORY);
+
+            var input = driver.CreateInputTopic<string, string>("input");
+            var output = driver.CreateOutputTopic<string, string>("output");
+            for (int i = 1; i <= 5; ++i)
+                input.PipeInput("key1", $"v{i}");
+
+            var results = IntegrationTestUtils.WaitUntilMinKeyValueRecordsReceived(output, 5);
+            CollectionAssert.AreEqual(
+                new[] {"V1", "V2", "V3", "V4", "V5"},
+                results.Select(r => r.Message.Value).ToList());
         }
 
         [Test]

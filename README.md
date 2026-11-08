@@ -10,6 +10,10 @@
 | Streamiz.Kafka.Net.Metrics.Prometheus   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Metrics.Prometheus)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Metrics.Prometheus) |
 | Streamiz.Kafka.Net.Metrics.OpenTelemetry   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Metrics.OpenTelemetry)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Metrics.OpenTelemetry) |
 | Streamiz.Kafka.Net.Azure.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Azure.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Azure.RemoteStorage) |
+| Streamiz.Kafka.Net.Gcp.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Gcp.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Gcp.RemoteStorage) |
+| Streamiz.Kafka.Net.Aws.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Aws.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Aws.RemoteStorage) |
+| Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.Azure.Cosmos.RemoteStorage) |
+| Streamiz.Kafka.Net.MongoDb.RemoteStorage   | ![Nuget (with prereleases)](https://img.shields.io/nuget/vpre/Streamiz.Kafka.Net.MongoDb.RemoteStorage)  | ![Nuget](https://img.shields.io/nuget/dt/Streamiz.Kafka.Net.MongoDb.RemoteStorage) |
 
 ## Quality Statistics
 
@@ -52,6 +56,10 @@ Switch to `consumer`terminal and check aggregation result
 # Documentation
 
 Read the full documentation on https://lgouellec.github.io/streamiz/
+
+# Examples
+
+The [examples](examples/README.md) folder has runnable examples for every feature, grouped by topic: stateless and stateful operations, windowing, joins, the Processor API, state stores and interactive queries, remote storage, error handling, processing guarantees, serdes, async processing, observability, hosting and testing. Each example comes with tests that show its exact input and output.
 
 # Installation
 
@@ -98,26 +106,26 @@ static async System.Threading.Tasks.Task Main(string[] args)
 |:------------------------------------------------------------:|:----------------------------------:|:----------------------:|:------------------------------------------:|
 | Stateless processors                                         |              X                     |         X              |                                            |
 | RocksDb store                                                |              X                     |         X              |                                            |
-| Standby replicas                                             |              X                     |                        |    No plan for now                         |
+| Standby replicas                                             |              X                     |         X              | Placement via the metadata topic           |
 | InMemory store                                               |              X                     |         X              |                                            |
 | Transformer, Processor API                                   |              X                     |         X              |                                            |
 | Punctuate                                                    |              X                     |         X              |                                            |
 | KStream-KStream Join                                         |              X                     |         X              |                                            |
 | KTable-KTable Join                                           |              X                     |         X              |                                            |
-| KTable-KTable FK Join                                        |              X                     |                        | Plan for 1.8.0                             |
+| KTable-KTable FK Join                                        |              X                     |         X              |                                            |
 | KStream-KTable Join                                          |              X                     |         X              |                                            |
 | KStream-GlobalKTable Join                                    |              X                     |         X              |                                            |
-| External Async Processing                                    |                                    |         X              | V2 in coming                               |
+| External Async Processing                                    |                                    |         X              | V2 available (opt-in, AsyncProcessingMode) |
 | Hopping window                                               |              X                     |         X              |                                            |
 | Tumbling window                                              |              X                     |         X              |                                            |
-| Sliding window                                               |              X                     |                        | No plan for now                            |
-| Session window                                               |              X                     |                        | No plan for now                            |
+| Sliding window                                               |              X                     |         X              |                                            |
+| Session window                                               |              X                     |         X              |                                            |
 | Cache                                                        |              X                     |         X              |                                            |
 | Suppress(..)                                                 |              X                     |         X              |                                            |
-| Interactive Queries                                          |              X                     |                        | No plan for now                            |
-| State store batch restoring                                  |              X                     |                        | Plan for 1.8.0                             |
+| Interactive Queries                                          |              X                     |         X              | Cross-instance: set ApplicationServer      |
+| State store batch restoring                                  |              X                     |         X              |                                            |
 | Exactly Once                                                 |              X                     |         X              |                                            |
-| Remote storage (Azure, GCP, Aws)                             |                                    |         X              | Azure Preview, GCP and AWS coming          |
+| Remote storage (Azure, GCP, AWS, MongoDB)                    |                                    |         X              | Azure Table & Cosmos DB, GCP, AWS, MongoDB |
 
 # Community Support
 

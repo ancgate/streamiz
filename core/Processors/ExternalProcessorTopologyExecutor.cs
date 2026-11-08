@@ -226,6 +226,7 @@ namespace Streamiz.Kafka.Net.Processors
                         $"{logPrefix}Record with this following metadata ({recordToProcess.TopicPartitionOffset}) exceed the retry policy. The retry policy behavior will be skipped this message and process next one");
                     consumedOffsets.AddOrUpdate(recordToProcess.TopicPartition, recordToProcess.Offset.Value);
                     droppedRecordsSensor.Record();
+                    DeadLetterQueue.SendIfConfigured(context.Configuration, recordCollector, recordToProcess, e, log, logPrefix);
                 }
                 else if (RetryPolicy.EndRetryBehavior == EndRetryBehavior.FAIL)
                 {
@@ -233,6 +234,11 @@ namespace Streamiz.Kafka.Net.Processors
                         $"{logPrefix}Record with this following metadata ({recordToProcess.TopicPartitionOffset}) exceed the retry policy. The retry policy behavior is defined as a failure.");
                     throw;
                 }
+            }
+            catch (Exception e)
+            {
+                FailedRecordInfo.Attach(e, recordToProcess);
+                throw;
             }
             finally
             {

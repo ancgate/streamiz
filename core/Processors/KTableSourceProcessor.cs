@@ -11,7 +11,7 @@ namespace Streamiz.Kafka.Net.Processors
         private readonly string queryableName;
         private readonly bool sendOldValues;
 
-        private ITimestampedKeyValueStore<K, V> store;
+        private KeyValueStoreWrapper<K, V> store;
         private TimestampedTupleForwarder<K, V> tupleForwarder;
 
         public KTableSourceProcessor(string storeName, string queryableName, bool sendOldValues)
@@ -27,10 +27,10 @@ namespace Streamiz.Kafka.Net.Processors
 
             if (this.queryableName != null)
             {
-                store = (ITimestampedKeyValueStore<K, V>)context.GetStateStore(queryableName);
+                store = new KeyValueStoreWrapper<K, V>(context, queryableName);
                 tupleForwarder = new TimestampedTupleForwarder<K, V>(
-                    store,
-                    this, 
+                    store.Store,
+                    this,
                     kv => {
                         context.CurrentProcessor = this;
                         context.CurrentProcessor.Forward(kv.Key,
@@ -67,8 +67,22 @@ namespace Streamiz.Kafka.Net.Processors
                 {
                     oldValue = default(V);
                 }
-                store.Put(key, ValueAndTimestamp<V>.Make(value, Context.Timestamp));
-                tupleForwarder.MaybeForward(key, value, oldValue);
+
+                long putReturnCode = store.Put(key, value, Context.Timestamp);
+
+                // versioned store (KIP-914): a record older than the history retention is not put, so it isn't forwarded
+                if (putReturnCode == VersionedKeyValueStoreReturnCodes.PUT_RETURN_CODE_NOT_PUT)
+                {
+                    log.LogDebug(
+                        "{LogPrefix}Record (topic=[{Topic}] partition=[{Partition}] offset=[{Offset}]) is older than the history retention of the versioned store {Store}, it is not forwarded",
+                        logPrefix, Context.Topic, Context.Partition, Context.Offset, store.Name);
+                    return;
+                }
+
+                // an out-of-order record (written in the history of a versioned store) is forwarded with IsLatest = false;
+                // as in Kafka Streams, the old value is the latest value of the key (read before the put)
+                tupleForwarder.MaybeForward(key, value, oldValue,
+                    putReturnCode == KeyValueStoreWrapper<K, V>.PUT_RETURN_CODE_IS_LATEST);
             }
             else
             {

@@ -3,6 +3,7 @@ using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Mock.Sync;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Streamiz.Kafka.Net.Kafka.Internal;
 
@@ -14,11 +15,13 @@ namespace Streamiz.Kafka.Net.Mock.Pipes
         private readonly TimeSpan timeout;
         private readonly CancellationToken token;
         private readonly IConsumer<byte[], byte[]> consumer;
+        private readonly SyncProducer producer;
 
 
         public SyncPipeOutput(string topic, TimeSpan consumeTimeout, IStreamConfig configuration, SyncProducer producer, CancellationToken token)
         {
             this.token = token;
+            this.producer = producer;
             topicName = topic;
             timeout = consumeTimeout;
             consumer = new SyncConsumer(producer);
@@ -28,11 +31,27 @@ namespace Streamiz.Kafka.Net.Mock.Pipes
 
         public string TopicName => topicName;
 
-        public int Size => throw new InvalidOperationException("Operation not available in synchronous mode");
+        // records written to the topic and not read yet by this output topic
+        public int Size
+        {
+            get
+            {
+                long position = consumer.Position(new TopicPartition(topicName, 0)).Value;
+                return (int) Math.Max(0, producer.GetHistory(topicName).Count() - Math.Max(0, position));
+            }
+        }
 
-        public bool IsEmpty => throw new InvalidOperationException("Operation not available in synchronous mode");
+        public bool IsEmpty => Size == 0;
 
-        public List<PipeOutputInfo> GetInfos() => throw new InvalidOperationException("Operation not available in synchronous mode");
+        public List<PipeOutputInfo> GetInfos()
+        {
+            long high = producer.GetHistory(topicName).Count();
+            long position = Math.Max(0, consumer.Position(new TopicPartition(topicName, 0)).Value);
+            return new List<PipeOutputInfo>
+            {
+                new() {Topic = topicName, Partition = 0, Offset = position, Low = 0, High = high}
+            };
+        }
 
         public void Dispose()
         {

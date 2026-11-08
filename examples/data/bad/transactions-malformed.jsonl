@@ -1,0 +1,8 @@
+{"key":"A0005","value":"{\"transactionId\":\"X000001\",\"accountId\":\"A0005\",\"amount\":12.5","timestamp":"2026-01-05T10:00:00Z"}
+{"key":"A0011","value":"{\"transactionId\":\"X000002\",\"accountId\":\"A0011\",\"amount\":\"twelve\",\"currency\":\"EUR\"}","timestamp":"2026-01-05T11:30:00Z"}
+{"key":"A0023","value":"not json at all","timestamp":"2026-01-05T12:15:00Z"}
+{"key":"A0031","value":"42","timestamp":"2026-01-05T13:45:00Z"}
+{"key":"A0047","value":"[\"A0047\", 18.20, \"EUR\"]","timestamp":"2026-01-05T16:20:00Z"}
+{"key":"A0058","value":"{\"transactionId\":\"X000006\",\"accountId\":\"A0058\",\"amount\":19.9,\"timestamp\":\"yesterday\"}","timestamp":"2026-01-06T08:05:00Z"}
+{"key":"A0064","value":"<transaction><amount>10</amount></transaction>","timestamp":"2026-01-06T14:50:00Z"}
+{"key":"A0072","value":"{\"transactionId\":\"X000008\",\"accountId\":\"A0072\",\"amount\":1e999}","timestamp":"2026-01-06T19:30:00Z"}

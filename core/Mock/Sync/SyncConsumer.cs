@@ -195,7 +195,7 @@ namespace Streamiz.Kafka.Net.Mock.Sync
         {
             if (offsets.ContainsKey(partition.Topic))
             {
-                return offsets[partition.Topic].OffsetConsumed + 1;
+                return offsets[partition.Topic].OffsetConsumed; // next offset to consume, like a real consumer
             }
             else
                 return Offset.Unset;

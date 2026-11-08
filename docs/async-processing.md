@@ -11,6 +11,10 @@ Since `1.4.0` release, Streamiz release multiple asynchronous processors :
 
 These processors use the pattern request/reponse to satisfy the asynchronous request with some retry policy options.
 
+**Retry policy:** `NumberOfRetry(n)` is the number of retries after the first attempt. `0` calls the function once, with no retry; the default `5` calls it up to 6 times. This applies to both engines (V1 and V2).
+
+> **Behaviour change:** before this version, `NumberOfRetry(n)` counted the attempts, the first one included, so `NumberOfRetry(0)` never called the function. If you set `NumberOfRetry`, a failing record is now called once more than before.
+
 ## Example
 
 **Use case: Enrich data from a mongodb instance**
@@ -200,3 +204,50 @@ docker-compose exec broker kafka-console-producer --bootstrap-server broker:2909
 - Here the schema of this topology
 
 ![async-topology](./assets/async-topology.png)
+## Async processing V2 (in-task)
+
+Set `AsyncProcessingMode = AsyncProcessingMode.V2` (`async.processing.mode`, default `V1`) to run the asynchronous processors inside the stream tasks, like a parallel consumer. The DSL is the same (`MapAsync`, `MapValuesAsync`, `FlatMapAsync`, `FlatMapValuesAsync`, `ForeachAsync`, `RetryPolicy`, `ExternalContext`).
+
+``` csharp
+var config = new StreamConfig<StringSerDes, StringSerDes>();
+config.ApplicationId = "async-app";
+config.AsyncProcessingMode = AsyncProcessingMode.V2;
+
+builder.Stream<string, string>("input")
+    .MapValuesAsync(async (record, _) => await CallExternalServiceAsync(record.Value),
+        RetryPolicy.NewBuilder()
+            .MaxConcurrency(32)
+            .RetriableException<HttpRequestException>()
+            .NumberOfRetry(5)
+            .RetryBackOffMs(100)
+            .Build())
+    .To("output");
+```
+
+**What changes compared to V1**
+
+- There is no request topic and no external stream thread (and no `<application.id>-external` consumer group): the async processor is a processor of the stream task. The topology is rewritten when the `KafkaStream` (or the `TopologyTestDriver`) is created, so `Topology.Describe()` on the built topology still shows the V1 shape.
+- The response topic of `MapAsync`, `MapValuesAsync`, `FlatMapAsync` and `FlatMapValuesAsync` is kept: it repartitions the results by their (possibly new) key, exactly as in V1, so the topology downstream of the async processor is the same in both modes. `RequestSerDes` is not used in V2.
+
+**Execution model**
+
+- The async processor starts the call on the thread pool and returns immediately. The calls run concurrently for different keys; the records with the same key are called strictly one after the other, in offset order.
+- When a call completes, its result is queued; the stream thread forwards it downstream (with the record's original timestamp and headers) at its next iteration, so the downstream processors, state stores and the producer are only used by the stream thread. While calls are in progress, the stream thread polls Kafka with a short timeout (5 ms) to forward the results quickly.
+- Back-pressure: `RetryPolicy.MaxConcurrency` (default 16) is the maximum number of records accepted by one async processor in one task and not completed yet (running, retrying or waiting behind a record with the same key). When it's reached, the task stops processing new records (they stay in the task's record queue) and the stream thread pauses the task's partitions; they are resumed when the async processors of the task are at most half full.
+
+**Offsets (at-least-once)**
+
+A record whose call is not completed is not committed: for each partition, the task commits up to the oldest record still in progress (excluded). The repartition records are purged with the same rule. A crash can process again the records completed after that offset.
+
+When a task is revoked or the application is closed, the task waits for the calls in progress (at most half of `MaxPollIntervalMs`), forwards their results, then commits. When the partitions are lost, the calls in progress are cancelled and their results ignored (they are processed again by the new owner). With exactly-once, the results are produced by the stream thread inside the task's transaction and the committed offsets never pass a record in progress, so the guarantee is kept by design (this is not covered by an automated test yet: the test driver forces at-least-once).
+
+**Retries and end of retries**
+
+- The retries are asynchronous (`Task.Delay(RetryBackOffMs)`), for the exceptions of `RetriableException<T>()`. `TimeoutMs` (default `MaxPollIntervalMs / 3`) bounds the total time of the calls of one record (a call can't be cancelled: its late result is ignored).
+- `EndRetryBehavior.SKIP`: the record is dropped (dropped-records metric) and sent to the dead letter queue if `DeadLetterQueueTopicName` is set.
+- `EndRetryBehavior.FAIL`, or an exception which is not retriable: the error is raised on the stream thread when the completion is handled, through the `ProcessingExceptionHandler` (`CONTINUE` skips the record, `FAIL` raises it to the stream thread and the `InnerExceptionHandler`). In V1, the external thread stops instead.
+- `EndRetryBehavior.BUFFERED`: the record is retried until it succeeds; the next records with the same key wait for it (`TimeoutMs` and `NumberOfRetry` don't apply). `MemoryBufferSize` is not used in V2.
+
+**TopologyTestDriver**
+
+In `SYNC_TASK` mode, `PipeInput` and `PipeInputs` wait (at most one minute) for the calls started by the piped records and forward their results before returning, so the outputs are available right away. `PipeInputs` processes all its records before waiting, so their calls run concurrently.

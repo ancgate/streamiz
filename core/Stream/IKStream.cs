@@ -2294,14 +2294,23 @@ namespace Streamiz.Kafka.Net.Stream
 
         #endregion
 
-        #region WithRecordTimestamp
+        #region AlterRecordTimestamp
 
         /// <summary>
         /// Updates the timestamp of the record with one provided by the <paramref name="timestampExtractor"/> function. Negative timestamps will be ignored.
         /// </summary>
-        /// <param name="timestampExtractor"></param>
+        /// <param name="timestampExtractor">Function which returns the new timestamp of the record (key, value, record context)</param>
         /// <param name="named">A <see cref="string"/> config used to name the processor in the topology. Default : null</param>
         /// <returns>a <see cref="IKStream{K,V1}"/> that has records with timestamp explicitly provided by <paramref name="timestampExtractor"/></returns>
+        IKStream<K, V> AlterRecordTimestamp(Func<K, V, IRecordContext, long> timestampExtractor, string named = null);
+
+        /// <summary>
+        /// Updates the timestamp of the record with one provided by the <paramref name="timestampExtractor"/> function. Negative timestamps will be ignored.
+        /// </summary>
+        /// <param name="timestampExtractor">Function which returns the new timestamp of the record (key, value, record context)</param>
+        /// <param name="named">A <see cref="string"/> config used to name the processor in the topology. Default : null</param>
+        /// <returns>a <see cref="IKStream{K,V1}"/> that has records with timestamp explicitly provided by <paramref name="timestampExtractor"/></returns>
+        [Obsolete("Use AlterRecordTimestamp instead. WithRecordTimestamp will be removed in a future major version.")]
         IKStream<K, V> WithRecordTimestamp(Func<K, V, IRecordContext, long> timestampExtractor, string named = null);
 
         #endregion

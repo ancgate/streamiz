@@ -1,0 +1,34 @@
+{
+  "seed": 20260107,
+  "pageViews": 17179,
+  "humanPageViews": 10134,
+  "users": 1000,
+  "sessionGapMinutes": 30,
+  "humanSessions": 2118,
+  "sessionsReachingCart": 778,
+  "sessionsReachingCheckout": 446,
+  "sessionsConverted": 331,
+  "crawler": {
+    "userId": "BOT-CRAWLER",
+    "userAgent": "ExampleCrawler/1.0 (+https://example.com/bot)",
+    "pageViews": 5845
+  },
+  "scrapers": [
+    {
+      "userId": "BOT-SCRAPER-1",
+      "pageViews": 800,
+      "bursts": [
+        "2026-01-05T03:12:00Z",
+        "2026-01-06T02:40:00Z"
+      ]
+    },
+    {
+      "userId": "BOT-SCRAPER-2",
+      "pageViews": 400,
+      "bursts": [
+        "2026-01-05T15:05:00Z"
+      ]
+    }
+  ],
+  "maxHumanViewsPerMinute": 4
+}

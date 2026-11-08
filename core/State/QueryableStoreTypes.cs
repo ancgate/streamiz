@@ -38,6 +38,44 @@ namespace Streamiz.Kafka.Net.State
         /// <typeparam name="V">value type of the store</typeparam>
         /// <returns><see cref="QueryableStoreTypes.WindowStore{K, V}"/></returns>
         public static IQueryableStoreType<IReadOnlyWindowStore<K, V>, K, V> WindowStore<K, V>() => new WindowStoreType<K, V>();
+
+        /// <summary>
+        /// A <see cref="IQueryableStoreType{T, K, V}"/> that accepts <see cref="IReadOnlySessionStore{K, AGG}"/>.
+        /// </summary>
+        /// <typeparam name="K">key type of the store</typeparam>
+        /// <typeparam name="V">aggregate type of the store</typeparam>
+        /// <returns><see cref="IQueryableStoreType{T, K, V}"/></returns>
+        public static IQueryableStoreType<IReadOnlySessionStore<K, V>, K, V> SessionStore<K, V>() => new SessionStoreType<K, V>();
+
+        /// <summary>
+        /// A <see cref="IQueryableStoreType{T, K, V}"/> that accepts <see cref="IReadOnlyVersionedKeyValueStore{K, V}"/>.
+        /// </summary>
+        /// <typeparam name="K">key type of the store</typeparam>
+        /// <typeparam name="V">value type of the store</typeparam>
+        /// <returns><see cref="IQueryableStoreType{T, K, V}"/></returns>
+        public static IQueryableStoreType<IReadOnlyVersionedKeyValueStore<K, V>, K, V> VersionedKeyValueStore<K, V>() => new VersionedKeyValueStoreType<K, V>();
+    }
+
+    internal class VersionedKeyValueStoreType<K, V> : QueryableStoreTypeMatcher<IReadOnlyVersionedKeyValueStore<K, V>, K, V>
+    {
+        public VersionedKeyValueStoreType()
+            : base(new[] { typeof(IReadOnlyVersionedKeyValueStore<K, V>) })
+        {
+        }
+
+        public override IReadOnlyVersionedKeyValueStore<K, V> Create(IStateStoreProvider<IReadOnlyVersionedKeyValueStore<K, V>, K, V> storeProvider, string storeName)
+            => new CompositeReadOnlyVersionedKeyValueStore<K, V>(storeProvider, this, storeName);
+    }
+
+    internal class SessionStoreType<K, V> : QueryableStoreTypeMatcher<IReadOnlySessionStore<K, V>, K, V>
+    {
+        public SessionStoreType()
+            : base(new[] { typeof(IReadOnlySessionStore<K, V>) })
+        {
+        }
+
+        public override IReadOnlySessionStore<K, V> Create(IStateStoreProvider<IReadOnlySessionStore<K, V>, K, V> storeProvider, string storeName)
+            => new CompositeReadOnlySessionStore<K, V>(storeProvider, this, storeName);
     }
 
     internal class KeyValueStoreType<K, V> : QueryableStoreTypeMatcher<IReadOnlyKeyValueStore<K, V>, K, V>

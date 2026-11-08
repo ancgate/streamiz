@@ -950,6 +950,198 @@ namespace Streamiz.Kafka.Net.Table
         /// <returns>a <see cref="IKTable{K, VR}"/> that contains join-records for each key and values computed by the given value joiner, one for each matched record-pair with the same key plus one for each non-matching record both KTables</returns>
         IKTable<K, VR> OuterJoin<VT, VR>(IKTable<K, VT> table, Func<V, VT, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null);
 
+        #region Foreign key join
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed inner join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// This is a many-to-one join: several records of this table can refer to the same record of the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// Records of this table without a foreign key (null) or without a matching record in the other table produce no result;
+        /// a result is removed (tombstone) when the record of either table is deleted or the foreign key changes to a key without match.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a function that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed inner join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// This is a many-to-one join: several records of this table can refer to the same record of the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// Records of this table without a foreign key (null) or without a matching record in the other table produce no result;
+        /// a result is removed (tombstone) when the record of either table is deleted or the foreign key changes to a key without match.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a function that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <param name="materialized">an instance of <see cref="Materialized{K, VR, S}"/> used to describe how the state store of the result should be materialized.</param>
+        /// <param name="named">A <see cref="string"/> config used to name the processors, internal topics and stores of the join. Default : null</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed inner join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// This is a many-to-one join: several records of this table can refer to the same record of the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// Records of this table without a foreign key (null) or without a matching record in the other table produce no result;
+        /// a result is removed (tombstone) when the record of either table is deleted or the foreign key changes to a key without match.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a value joiner that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed inner join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// This is a many-to-one join: several records of this table can refer to the same record of the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// Records of this table without a foreign key (null) or without a matching record in the other table produce no result;
+        /// a result is removed (tombstone) when the record of either table is deleted or the foreign key changes to a key without match.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a value joiner that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <param name="materialized">an instance of <see cref="Materialized{K, VR, S}"/> used to describe how the state store of the result should be materialized.</param>
+        /// <param name="named">A <see cref="string"/> config used to name the processors, internal topics and stores of the join. Default : null</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> Join<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed left join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// Unlike <see cref="Join{VR, KO, VO}(IKTable{KO, VO}, Func{V, KO}, Func{V, VO, VR})"/>, every record of this table produces a result:
+        /// the value joiner is called with a null foreign value if the foreign key is null or has no matching record in the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a function that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed left join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// Unlike <see cref="Join{VR, KO, VO}(IKTable{KO, VO}, Func{V, KO}, Func{V, VO, VR})"/>, every record of this table produces a result:
+        /// the value joiner is called with a null foreign value if the foreign key is null or has no matching record in the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a function that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <param name="materialized">an instance of <see cref="Materialized{K, VR, S}"/> used to describe how the state store of the result should be materialized.</param>
+        /// <param name="named">A <see cref="string"/> config used to name the processors, internal topics and stores of the join. Default : null</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, Func<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed left join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// Unlike <see cref="Join{VR, KO, VO}(IKTable{KO, VO}, Func{V, KO}, Func{V, VO, VR})"/>, every record of this table produces a result:
+        /// the value joiner is called with a null foreign value if the foreign key is null or has no matching record in the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a value joiner that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner);
+
+        /// <summary>
+        /// Join records of this <see cref="IKTable{K, V}"/> with another <see cref="IKTable{KO, VO}"/> using a non-windowed left join,
+        /// on a foreign key: <paramref name="foreignKeyExtractor"/> extracts the key of the other table from each value of this table (KIP-213).
+        /// <para>
+        /// Unlike <see cref="Join{VR, KO, VO}(IKTable{KO, VO}, Func{V, KO}, Func{V, VO, VR})"/>, every record of this table produces a result:
+        /// the value joiner is called with a null foreign value if the foreign key is null or has no matching record in the other table.
+        /// An update of the other table updates the results of all the records of this table which refer to it.
+        /// </para>
+        /// <para>
+        /// The join uses two internal topics (subscription registration and response) and a state store of subscriptions.
+        /// The tables don't need to be co-partitioned.
+        /// </para>
+        /// </summary>
+        /// <typeparam name="VR">the value type of the result</typeparam>
+        /// <typeparam name="KO">the key type of the other table</typeparam>
+        /// <typeparam name="VO">the value type of the other table</typeparam>
+        /// <param name="foreignKeyTable">the other table, whose key is the foreign key</param>
+        /// <param name="foreignKeyExtractor">a function which extracts the foreign key from a value of this table</param>
+        /// <param name="valueJoiner">a value joiner that computes the join result for a value of this table and the matching value of the other table</param>
+        /// <param name="materialized">an instance of <see cref="Materialized{K, VR, S}"/> used to describe how the state store of the result should be materialized.</param>
+        /// <param name="named">A <see cref="string"/> config used to name the processors, internal topics and stores of the join. Default : null</param>
+        /// <returns>a <see cref="IKTable{K, VR}"/> keyed like this table, with the join results</returns>
+        IKTable<K, VR> LeftJoin<VR, KO, VO>(IKTable<KO, VO> foreignKeyTable, Func<V, KO> foreignKeyExtractor, IValueJoiner<V, VO, VR> valueJoiner, Materialized<K, VR, IKeyValueStore<Bytes, byte[]>> materialized, string named = null);
+
+        #endregion
+
         /// <summary>
         /// Suppress some updates from this changelog stream, determined by the supplied <paramref name="suppressed"/> configuration.
         /// This controls what updates downstream table and stream operations will receive.

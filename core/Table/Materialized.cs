@@ -120,18 +120,18 @@ namespace Streamiz.Kafka.Net.Table
             return m;
         }
 
-        // /// <summary>
-        // /// Materialize a <see cref="ISessionStore{K, AGG}"/> using the provided <see cref="ISessionBytesStoreSupplier"/>
-        // /// Important: Custom subclasses are allowed here, but they should respect the retention contract:
-        // /// Session stores are required to retain windows at least as long as (session inactivity gap + session grace period).
-        // /// </summary>
-        // /// <param name="supplier">the <see cref="ISessionBytesStoreSupplier"/> used to materialize the store</param>
-        // /// <returns>a new <see cref="Materialized{K, V, S}"/> instance with the given supplier</returns>
-        // public static Materialized<K, V, ISessionStore<Bytes, byte[]>> Create(ISessionBytesStoreSupplier supplier)
-        // {
-        //     var m = new Materialized<K, V, ISessionStore<Bytes, byte[]>>(supplier);
-        //     return m;
-        // }
+        /// <summary>
+        /// Materialize a <see cref="ISessionStore{K, AGG}"/> using the provided <see cref="ISessionBytesStoreSupplier"/>
+        /// Important: Custom subclasses are allowed here, but they should respect the retention contract:
+        /// Session stores are required to retain windows at least as long as (session inactivity gap + session grace period).
+        /// </summary>
+        /// <param name="supplier">the <see cref="ISessionBytesStoreSupplier"/> used to materialize the store</param>
+        /// <returns>a new <see cref="Materialized{K, V, S}"/> instance with the given supplier</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> Create(ISessionBytesStoreSupplier supplier)
+        {
+            var m = new Materialized<K, V, ISessionStore<Bytes, byte[]>>(supplier);
+            return m;
+        }
 
         /// <summary>
         /// Materialize a <see cref="IKeyValueStore{K, V}"/> using the provided <see cref="IKeyValueBytesStoreSupplier"/>
@@ -185,21 +185,21 @@ namespace Streamiz.Kafka.Net.Table
             return Create(supplier).WithKeySerdes(new KS()).WithValueSerdes(new VS());
         }
 
-        // /// <summary>
-        // /// Materialize a <see cref="ISessionStore{K, AGG}"/> using the provided <see cref="ISessionBytesStoreSupplier"/>
-        // /// Important: Custom subclasses are allowed here, but they should respect the retention contract:
-        // /// Session stores are required to retain windows at least as long as (session inactivity gap + session grace period).
-        // /// </summary>
-        // /// <typeparam name="KS">New serializer for <typeparamref name="K"/> type</typeparam>
-        // /// <typeparam name="VS">New serializer for <typeparamref name="V"/> type</typeparam>
-        // /// <param name="supplier">the <see cref="ISessionBytesStoreSupplier"/> used to materialize the store</param>
-        // /// <returns>a new <see cref="Materialized{K, V, S}"/> instance with the given supplier</returns>
-        // public static Materialized<K, V, ISessionStore<Bytes, byte[]>> Create<KS, VS>(ISessionBytesStoreSupplier supplier)
-        //     where KS : ISerDes<K>, new()
-        //     where VS : ISerDes<V>, new()
-        // {
-        //     return Create(supplier).WithKeySerdes(new KS()).WithValueSerdes(new VS());
-        // }
+        /// <summary>
+        /// Materialize a <see cref="ISessionStore{K, AGG}"/> using the provided <see cref="ISessionBytesStoreSupplier"/>
+        /// Important: Custom subclasses are allowed here, but they should respect the retention contract:
+        /// Session stores are required to retain windows at least as long as (session inactivity gap + session grace period).
+        /// </summary>
+        /// <typeparam name="KS">New serializer for <typeparamref name="K"/> type</typeparam>
+        /// <typeparam name="VS">New serializer for <typeparamref name="V"/> type</typeparam>
+        /// <param name="supplier">the <see cref="ISessionBytesStoreSupplier"/> used to materialize the store</param>
+        /// <returns>a new <see cref="Materialized{K, V, S}"/> instance with the given supplier</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> Create<KS, VS>(ISessionBytesStoreSupplier supplier)
+            where KS : ISerDes<K>, new()
+            where VS : ISerDes<V>, new()
+        {
+            return Create(supplier).WithKeySerdes(new KS()).WithValueSerdes(new VS());
+        }
 
         /// <summary>
         /// Materialize a <see cref="IKeyValueStore{K, V}"/> using the provided <see cref="IKeyValueBytesStoreSupplier"/>
@@ -362,7 +362,9 @@ namespace Streamiz.Kafka.Net.Table
             this.retention = retention;
             if (StoreSupplier is IWindowBytesStoreSupplier windowBytesStoreSupplier)
                 windowBytesStoreSupplier.Retention = (long) retention.TotalMilliseconds;
-            
+            else if (StoreSupplier is ISessionBytesStoreSupplier sessionBytesStoreSupplier)
+                sessionBytesStoreSupplier.Retention = (long) retention.TotalMilliseconds;
+
             return this;
         }
 
@@ -656,9 +658,84 @@ namespace Streamiz.Kafka.Net.Table
                         windowSize.HasValue ? (long)windowSize.Value.TotalMilliseconds : (long?)null,
                         false))
                     .WithName(storeName);
-            
+
             return materialized;
         }
+    }
+
+    /// <summary>
+    /// Helper to materialize a session store in memory.
+    /// </summary>
+    public static class InMemorySessions
+    {
+        /// <summary>
+        /// Materialize an in-memory <see cref="ISessionStore{K, AGG}"/>.
+        /// </summary>
+        /// <param name="storeName">name of the store</param>
+        /// <param name="retention">retention of the sessions, at least the inactivity gap plus the grace period (default : one day)</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <returns>a <see cref="Materialized{K, V, S}"/> of a session store</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> @As<K, V>(string storeName = null, TimeSpan? retention = null)
+            => Materialized<K, V, ISessionStore<Bytes, byte[]>>
+                .Create(new InMemorySessionBytesStoreSupplier(storeName, retention ?? TimeSpan.FromDays(1)))
+                .WithName(storeName)
+                .WithRetention(retention ?? TimeSpan.FromDays(1));
+
+        /// <summary>
+        /// Materialize an in-memory <see cref="ISessionStore{K, AGG}"/> with serdes.
+        /// </summary>
+        /// <param name="storeName">name of the store</param>
+        /// <param name="retention">retention of the sessions, at least the inactivity gap plus the grace period (default : one day)</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <typeparam name="KS">key serdes type</typeparam>
+        /// <typeparam name="VS">aggregate serdes type</typeparam>
+        /// <returns>a <see cref="Materialized{K, V, S}"/> of a session store</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> @As<K, V, KS, VS>(string storeName = null, TimeSpan? retention = null)
+            where KS : ISerDes<K>, new()
+            where VS : ISerDes<V>, new()
+            => @As<K, V>(storeName, retention).WithKeySerdes(new KS()).WithValueSerdes(new VS());
+    }
+
+    /// <summary>
+    /// Helper to materialize a session store in RocksDB.
+    /// </summary>
+    public static class RocksDbSessions
+    {
+        /// <summary>
+        /// Materialize a persistent (RocksDB) <see cref="ISessionStore{K, AGG}"/>.
+        /// </summary>
+        /// <param name="storeName">name of the store</param>
+        /// <param name="retention">retention of the sessions, at least the inactivity gap plus the grace period (default : one day)</param>
+        /// <param name="segmentInterval">size of the segments (default : half of the retention, at least one minute)</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <returns>a <see cref="Materialized{K, V, S}"/> of a session store</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> @As<K, V>(string storeName = null, TimeSpan? retention = null, TimeSpan? segmentInterval = null)
+            => Materialized<K, V, ISessionStore<Bytes, byte[]>>
+                .Create(new RocksDbSessionBytesStoreSupplier(
+                    storeName,
+                    retention ?? TimeSpan.FromDays(1),
+                    segmentInterval.HasValue ? (long) segmentInterval.Value.TotalMilliseconds : (long?) null))
+                .WithName(storeName)
+                .WithRetention(retention ?? TimeSpan.FromDays(1));
+
+        /// <summary>
+        /// Materialize a persistent (RocksDB) <see cref="ISessionStore{K, AGG}"/> with serdes.
+        /// </summary>
+        /// <param name="storeName">name of the store</param>
+        /// <param name="retention">retention of the sessions, at least the inactivity gap plus the grace period (default : one day)</param>
+        /// <param name="segmentInterval">size of the segments (default : half of the retention, at least one minute)</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <typeparam name="KS">key serdes type</typeparam>
+        /// <typeparam name="VS">aggregate serdes type</typeparam>
+        /// <returns>a <see cref="Materialized{K, V, S}"/> of a session store</returns>
+        public static Materialized<K, V, ISessionStore<Bytes, byte[]>> @As<K, V, KS, VS>(string storeName = null, TimeSpan? retention = null, TimeSpan? segmentInterval = null)
+            where KS : ISerDes<K>, new()
+            where VS : ISerDes<V>, new()
+            => @As<K, V>(storeName, retention, segmentInterval).WithKeySerdes(new KS()).WithValueSerdes(new VS());
     }
 
     #endregion

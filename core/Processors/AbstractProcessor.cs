@@ -11,16 +11,27 @@ using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Metrics;
 using Streamiz.Kafka.Net.Metrics.Internal;
 using Streamiz.Kafka.Net.Processors.Internal;
+using Streamiz.Kafka.Net.Kafka.Internal;
 using Streamiz.Kafka.Net.SerDes;
 
 
 namespace Streamiz.Kafka.Net.Processors
 {
-    internal abstract class AbstractProcessor<K, V> : IProcessor<K, V>
+    /// <summary>
+    /// A node which records the end-to-end latency of the records it processes (KIP-613).
+    /// Only source and terminal (no child) nodes record it.
+    /// </summary>
+    internal interface IEndToEndLatencyNode
+    {
+        void MaybeRecordEndToEndLatency();
+    }
+
+    internal abstract class AbstractProcessor<K, V> : IProcessor<K, V>, IEndToEndLatencyNode
     {
         protected ILogger log = null;
         protected string logPrefix = "";
         protected Sensor droppedRecordsSensor;
+        private Sensor endToEndLatencySensor;
 
 
         public ProcessorContext Context { get; protected set; }
@@ -173,7 +184,11 @@ namespace Streamiz.Kafka.Net.Processors
                     Context.CurrentProcessor = null;
                     Parallel.ForEach(processors,
                         new ParallelOptions { MaxDegreeOfParallelism = Context.Configuration.MaxDegreeOfParallelism },
-                        action);
+                        processor =>
+                        {
+                            (processor as IEndToEndLatencyNode)?.MaybeRecordEndToEndLatency();
+                            action(processor);
+                        });
                 }
                 catch (AggregateException e)
                 {
@@ -185,9 +200,22 @@ namespace Streamiz.Kafka.Net.Processors
                 foreach (var processor in processors)
                 {
                     Context.CurrentProcessor = processor;
+                    (processor as IEndToEndLatencyNode)?.MaybeRecordEndToEndLatency();
                     action.Invoke(processor);
                 }
             }
+        }
+
+        /// <summary>
+        /// Record the end-to-end latency (wall clock time - record timestamp) if this node is a source or a terminal node.
+        /// </summary>
+        public void MaybeRecordEndToEndLatency()
+        {
+            if (endToEndLatencySensor == null || endToEndLatencySensor.NoRunnable || Context?.RecordContext == null)
+                return;
+
+            long now = Context.WallClockTime;
+            endToEndLatencySensor.Record(now - Context.Timestamp, now);
         }
 
         #endregion
@@ -202,6 +230,13 @@ namespace Streamiz.Kafka.Net.Processors
                 Context.Id,
                 Context.Metrics);
             
+            if (this is ISourceProcessor || Next.Count == 0)
+                endToEndLatencySensor = ProcessorNodeMetrics.RecordE2ELatencySensor(
+                    Thread.CurrentThread.Name,
+                    Context.Id,
+                    Name,
+                    Context.Metrics);
+
             foreach (var n in Next)
             {
                 Context.CurrentProcessor = n;
@@ -320,7 +355,7 @@ namespace Streamiz.Kafka.Net.Processors
             return Name.GetHashCode();
         }
 
-        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record)
+        public virtual ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false)
         {
             try
             {
@@ -328,6 +363,10 @@ namespace Streamiz.Kafka.Net.Processors
                 return new ObjectDeserialized(o, false);
             }catch(Exception e)
             {
+                // only deserialized for the timestamp extractor: the error is handled when the record is processed
+                if (forTimestampExtraction)
+                    return new ObjectDeserialized(null, false);
+
                 var handlerResponse = Context.Configuration.DeserializationExceptionHandler != null ?
                     Context.Configuration.DeserializationExceptionHandler(Context, record, e) : ExceptionHandlerResponse.FAIL;
 
@@ -339,13 +378,14 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during key deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
+                    DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }
 
         }
 
-        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record)
+        public virtual ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false)
         {
             try
             {
@@ -354,6 +394,10 @@ namespace Streamiz.Kafka.Net.Processors
             }
             catch (Exception e)
             {
+                // only deserialized for the timestamp extractor: the error is handled when the record is processed
+                if (forTimestampExtraction)
+                    return new ObjectDeserialized(null, false);
+
                 var handlerResponse = Context.Configuration.DeserializationExceptionHandler != null ?
                     Context.Configuration.DeserializationExceptionHandler(Context, record, e) : ExceptionHandlerResponse.FAIL;
 
@@ -365,6 +409,7 @@ namespace Streamiz.Kafka.Net.Processors
                     sb.AppendLine($"{logPrefix}Error during value deserialization [Topic:{record.Topic}|Partition:{record.Partition}|Offset:{record.Offset}|Timestamp:{record.Message.Timestamp.UnixTimestampMs}] with exception {e}.");
                     sb.AppendLine($"{logPrefix}DeserializationExceptionHandler return 'CONTINUE', so this message will be skipped and not processed !");
                     log.LogError(sb.ToString());
+                    DeadLetterQueue.SendIfConfigured(Context.Configuration, Context.RecordCollector, record, e, log, logPrefix);
                     return ObjectDeserialized.ObjectSkipped;
                 }
             }

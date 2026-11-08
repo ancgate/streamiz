@@ -152,4 +152,110 @@ public class MemoryCacheTests
         Assert.AreEqual(expectedbis, results);
     }
 
+
+    private (MockSystemTime clock, List<string> single, List<List<(string value, EvictionReason reason)>> batches)
+        CreateBatchCache(long sizeLimit)
+    {
+        memoryCache?.Dispose();
+        var clock = new MockSystemTime(DateTime.Now);
+        var options = new MemoryCacheOptions {SizeLimit = sizeLimit, CompactionPercentage = 0.1};
+        memoryCache = new MemoryCache<Bytes, CacheEntryValue>(options, new BytesComparer(), clock);
+
+        var single = new List<string>();
+        var batches = new List<List<(string, EvictionReason)>>();
+        memoryCache.BatchEvictionCallback = entries =>
+        {
+            var batch = new List<(string, EvictionReason)>();
+            foreach (var e in entries)
+                batch.Add((Encoding.UTF8.GetString(e.Value.Value), e.Reason));
+            batches.Add(batch);
+        };
+        return (clock, single, batches);
+    }
+
+    [Test]
+    public void BatchEvictionCallbackGetsTheFlushedEntriesInLruOrder()
+    {
+        var (clock, single, batches) = CreateBatchCache(100000);
+        PostEvictionDelegate<Bytes, CacheEntryValue> deleg =
+            (key, value, reason, state) => single.Add($"{Encoding.UTF8.GetString(value.Value)}:{reason}");
+
+        PutCache(Bytes.Wrap(new byte[] {1}), "a", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        PutCache(Bytes.Wrap(new byte[] {2}), "b", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        PutCache(Bytes.Wrap(new byte[] {3}), "c", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        memoryCache.Get(Bytes.Wrap(new byte[] {1})); // a is now the most recently used
+
+        memoryCache.Compact(1d);
+
+        Assert.AreEqual(1, batches.Count);
+        CollectionAssert.AreEqual(new[]
+        {
+            ("b", EvictionReason.Setted), ("c", EvictionReason.Setted), ("a", EvictionReason.Setted)
+        }, batches[0]);
+        CollectionAssert.IsEmpty(single);
+        Assert.AreEqual(0, memoryCache.Count);
+        Assert.AreEqual(0, memoryCache.Size);
+    }
+
+    [Test]
+    public void BatchEvictionCallbackGetsTheEntriesOfOneOverCapacityCompaction()
+    {
+        // each entry is 1 (key) + 25 (header) + 7 (value) = 33 bytes: the 4th entry exceeds 100 bytes
+        var (clock, single, batches) = CreateBatchCache(100);
+        PostEvictionDelegate<Bytes, CacheEntryValue> deleg =
+            (key, value, reason, state) => single.Add($"{Encoding.UTF8.GetString(value.Value)}:{reason}");
+
+        PutCache(Bytes.Wrap(new byte[] {1}), "test123", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        PutCache(Bytes.Wrap(new byte[] {2}), "test456", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        PutCache(Bytes.Wrap(new byte[] {3}), "test789", deleg);
+        clock.AdvanceTime(TimeSpan.FromMinutes(1));
+        PutCache(Bytes.Wrap(new byte[] {4}), "testabc", deleg);
+
+        // size 99 > low watermark 90 (100 - 10%): the least recently used entry is evicted to free 9 bytes
+        Assert.AreEqual(1, batches.Count);
+        CollectionAssert.AreEqual(new[] {("test123", EvictionReason.Capacity)}, batches[0]);
+        CollectionAssert.IsEmpty(single);
+        Assert.AreEqual(3, memoryCache.Count);
+    }
+
+    [Test]
+    public void ReplacedAndRemovedEntriesStillUseTheirOwnCallback()
+    {
+        var (clock, single, batches) = CreateBatchCache(100000);
+        PostEvictionDelegate<Bytes, CacheEntryValue> deleg =
+            (key, value, reason, state) => single.Add($"{Encoding.UTF8.GetString(value.Value)}:{reason}");
+
+        PutCache(Bytes.Wrap(new byte[] {1}), "a", deleg);
+        PutCache(Bytes.Wrap(new byte[] {1}), "a2", deleg);
+        PutCache(Bytes.Wrap(new byte[] {2}), "b", deleg);
+        memoryCache.Remove(Bytes.Wrap(new byte[] {2}));
+
+        CollectionAssert.AreEqual(new[] {"a:Replaced", "b:Removed"}, single);
+        CollectionAssert.IsEmpty(batches);
+
+        memoryCache.Compact(1d);
+        Assert.AreEqual(1, batches.Count);
+        CollectionAssert.AreEqual(new[] {("a2", EvictionReason.Setted)}, batches[0]);
+    }
+
+    [Test]
+    public void NoBatchEvictionCallbackKeepsTheCallbackOfEachEntry()
+    {
+        var results = new List<string>();
+        PostEvictionDelegate<Bytes, CacheEntryValue> deleg =
+            (key, value, reason, state) => results.Add(Encoding.UTF8.GetString(value.Value));
+
+        PutCache(Bytes.Wrap(new byte[] {1}), "a", deleg);
+        Thread.Sleep(2);
+        PutCache(Bytes.Wrap(new byte[] {2}), "b", deleg);
+        memoryCache.Compact(1d);
+
+        CollectionAssert.AreEqual(new[] {"a", "b"}, results);
+    }
+
 }

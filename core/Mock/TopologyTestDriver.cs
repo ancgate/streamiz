@@ -82,6 +82,8 @@ namespace Streamiz.Kafka.Net.Mock
         private readonly CancellationTokenSource tokenSource = new();
         private readonly InternalTopologyBuilder topologyBuilder;
         private readonly IStreamConfig configuration;
+        private readonly Microsoft.Extensions.Logging.ILoggerFactory loggerFactory;
+        private readonly Microsoft.Extensions.Logging.ILoggerFactory previousLoggerFactory;
         private readonly IStreamConfig topicConfiguration;
 
         private readonly IDictionary<string, IPipeInput> inputs = new Dictionary<string, IPipeInput>();
@@ -111,7 +113,8 @@ namespace Streamiz.Kafka.Net.Mock
 
         internal TopologyTestDriver(InternalTopologyBuilder builder, IStreamConfig config, Mode mode, IKafkaSupplier supplier = null)
         {
-            Logger.LoggerFactory = config.Logger;
+            loggerFactory = config.Logger;
+            previousLoggerFactory = Logger.Use(loggerFactory);
             topologyBuilder = builder;
             configuration = config;
 
@@ -170,6 +173,8 @@ namespace Streamiz.Kafka.Net.Mock
                 k.Value.Dispose();
             
             behavior.Dispose();
+            // the logger factory of this driver's configuration is not used by later streams once it's disposed
+            Logger.Restore(loggerFactory, previousLoggerFactory);
         }
 
         /// <summary>
@@ -384,6 +389,31 @@ namespace Streamiz.Kafka.Net.Mock
                 return onlyWindowStore;
             return null;
         }
+
+        /// <summary>
+        /// Get the <see cref="IReadOnlySessionStore{K, AGG}"/> with the given name.
+        /// </summary>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">aggregate type</typeparam>
+        /// <param name="name">the name of the store</param>
+        /// <returns>the session store, or null if no <see cref="IReadOnlySessionStore{K, AGG}"/> has been registered with the given name</returns>
+        public IReadOnlySessionStore<K, V> GetSessionStore<K, V>(string name)
+            => behavior.GetStateStore<K, V>(name) as IReadOnlySessionStore<K, V>;
+
+        /// <summary>
+        /// Get the <see cref="IVersionedKeyValueStore{K, V}"/> with the given name.
+        /// The store can be a "regular" or global store.
+        /// <p>
+        /// This is often useful in test cases to pre-populate the store before the test case instructs the topology to
+        /// <see cref="TestInputTopic{K, V}.PipeInput(K, V, DateTime, Headers)"/> process an input message, and/or to check the store afterward.
+        /// </p>
+        /// </summary>
+        /// <param name="name">the name of the store</param>
+        /// <typeparam name="K">key type</typeparam>
+        /// <typeparam name="V">value type</typeparam>
+        /// <returns>the versioned store, or null if no versioned store has been registered with the given name</returns>
+        public IVersionedKeyValueStore<K, V> GetVersionedKeyValueStore<K, V>(string name)
+            => behavior.GetStateStore<K, V>(name) as IVersionedKeyValueStore<K, V>;
 
         #endregion
 

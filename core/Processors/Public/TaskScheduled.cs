@@ -50,7 +50,7 @@ namespace Streamiz.Kafka.Net.Processors.Public
 
         internal bool Execute(long now)
         {
-            if (!IsCompleted && CanExecute(now))
+            if (!IsCompleted && !IsCancelled && CanExecute(now))
             {
                 punctuator(now);
                 lastTime = now;

@@ -15,6 +15,7 @@ namespace Streamiz.Kafka.Net.Mock.Sync
     {
         private class StreamTaskPublisher : ISyncPublisher
         {
+            private static readonly TimeSpan SyncAsyncProcessingTimeout = TimeSpan.FromMinutes(1);
             private readonly StreamTask task;
 
             public StreamTaskPublisher(StreamTask task)
@@ -37,8 +38,16 @@ namespace Streamiz.Kafka.Net.Mock.Sync
                 // Use the task's wall clock time which is mock-aware
                 long now = task.WallClockTime;
                 TaskManager.CurrentTask = task;
-                while (task.CanProcess(now))
-                    task.Process();
+                do
+                {
+                    while (task.CanProcess(now))
+                        task.Process();
+
+                    // async processors (AsyncProcessingMode.V2) : wait for their calls and forward their results,
+                    // so the outputs are available when PipeInput returns
+                    if (task.HasAsyncWork)
+                        task.CompleteAsyncProcessing(SyncAsyncProcessingTimeout, true);
+                } while (task.CanProcess(now));
 
                 task.PunctuateStreamTime();
                 task.PunctuateSystemTime();

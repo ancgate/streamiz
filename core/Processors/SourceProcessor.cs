@@ -12,8 +12,11 @@ namespace Streamiz.Kafka.Net.Processors
     {
         string TopicName { get; set; }
         ITimestampExtractor Extractor { get; }
-        ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record);
-        ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record);
+        // forTimestampExtraction: the record is only deserialized for the timestamp extractor. A deserialization error
+        // gives a null key/value to the extractor: the DeserializationExceptionHandler (and the dead letter queue) are
+        // only used once, when the record is processed
+        ObjectDeserialized DeserializeKey(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false);
+        ObjectDeserialized DeserializeValue(ConsumeResult<byte[], byte[]> record, bool forTimestampExtraction = false);
     }
 
     internal class SourceProcessor<K, V> : AbstractProcessor<K, V>, ISourceProcessor
@@ -57,6 +60,7 @@ namespace Streamiz.Kafka.Net.Processors
 
         public override void Process(K key, V value)
         {
+            MaybeRecordEndToEndLatency();
             Forward(key, value);
             ProcessSensor.Record(1.0, Context.Timestamp);
         }

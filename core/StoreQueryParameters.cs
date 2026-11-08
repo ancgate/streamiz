@@ -31,9 +31,15 @@ namespace Streamiz.Kafka.Net
     public class StoreQueryParameters<T, K, V> 
         where T : class
     {
-        //public int? Partition { get; private set; }
+        /// <summary>
+        /// The partition to query, or null to query all the partitions of the local instance.
+        /// </summary>
+        public int? Partition { get; private set; }
 
-        //public bool StaleStores { get; private set; }
+        /// <summary>
+        /// True if the stores of tasks which are not running (e.g. restoring) can be queried, which can return stale data.
+        /// </summary>
+        public bool StaleStores { get; private set; }
 
         /// <summary>
         /// The name of the state store that should be queried.
@@ -49,18 +55,29 @@ namespace Streamiz.Kafka.Net
         {
             StoreName = storeName;
             QueryableStoreType = queryableStoreType;
-            //Partition = partition;
-            //StaleStores = staleStores;
+            Partition = partition;
+            StaleStores = staleStores;
         }
 
-        //public StoreQueryParameters<T> WithPartition(int partition)
-        //{
-        //    return new StoreQueryParameters<T>(StoreName, QueryableStoreType, partition, StaleStores);
-        //}
+        /// <summary>
+        /// Query only the store of the task of <paramref name="partition"/> (see <see cref="KafkaStream.QueryMetadataForKey{K}(string, K, SerDes.ISerDes{K})"/>
+        /// to find the partition of a key).
+        /// </summary>
+        /// <param name="partition">The partition to query</param>
+        /// <returns>New parameters with the partition</returns>
+        public StoreQueryParameters<T, K, V> WithPartition(int partition)
+        {
+            return new StoreQueryParameters<T, K, V>(StoreName, QueryableStoreType, partition, StaleStores);
+        }
 
-        //public StoreQueryParameters<T> EnableStaleStores()
-        //{
-        //    return new StoreQueryParameters<T>(StoreName, QueryableStoreType, Partition, true);
-        //}
+        /// <summary>
+        /// Allow querying the stores while the stream threads are not running (e.g. while a task restores its stores after
+        /// a rebalance). The results can be stale.
+        /// </summary>
+        /// <returns>New parameters with stale stores enabled</returns>
+        public StoreQueryParameters<T, K, V> EnableStaleStores()
+        {
+            return new StoreQueryParameters<T, K, V>(StoreName, QueryableStoreType, Partition, true);
+        }
     }
 }
