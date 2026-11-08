@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>datagen</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- for ExampleRunner.BootstrapServers; brings Confluent.Kafka (the same version as Streamiz) -->
+    <ProjectReference Include="..\Streamiz.Examples.Common\Streamiz.Examples.Common.csproj" />
+  </ItemGroup>
+
+</Project>

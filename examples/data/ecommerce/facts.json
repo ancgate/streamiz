@@ -1,0 +1,44 @@
+{
+  "seed": 20260106,
+  "customers": 500,
+  "customerUpdates": 21,
+  "products": 200,
+  "priceChanges": 38,
+  "orders": 5000,
+  "payments": 4737,
+  "paymentsWithin30Minutes": 4495,
+  "latePayments": 242,
+  "unpaidOrders": 263,
+  "shipments": 3752,
+  "featuredProduct": {
+    "productId": "P0007",
+    "priceBefore": 193.02,
+    "priceAfter": 144.76,
+    "changedAt": "2026-01-06T12:00:00Z",
+    "ordersBefore": 41,
+    "ordersAfter": 47
+  },
+  "busiestHourUtc": 18,
+  "topCustomersByPaidAmount": [
+    {
+      "customerId": "C0001",
+      "revenue": 11281.07
+    },
+    {
+      "customerId": "C0002",
+      "revenue": 7618.10
+    },
+    {
+      "customerId": "C0020",
+      "revenue": 7367.33
+    },
+    {
+      "customerId": "C0003",
+      "revenue": 6619.88
+    },
+    {
+      "customerId": "C0034",
+      "revenue": 4637.02
+    }
+  ]
+}
