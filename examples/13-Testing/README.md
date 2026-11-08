@@ -54,4 +54,4 @@ Assert.AreEqual("2 COFFEES", standard.ReadKeyValue().Message.Value);
 - Reading a topic consumes it: a second `ReadValueList()` only returns the records produced since the first one.
 - Without an exception handler, an exception thrown by the topology is thrown by `PipeInput` in `SYNC_TASK` mode: `Assert.Throws<...>(() => input.PipeInput(...))`.
 - Windowed keys need windowed serdes to be read: `new TimeWindowedSerDes<string>(new StringSerDes(), windowSizeMs)`.
-- `config.Logger` becomes a process-wide logger factory: don't dispose it while other tests of the process still run streams.
+- `config.Logger` is used while the driver runs: dispose the logger factory after the driver (declare it first with `using`).

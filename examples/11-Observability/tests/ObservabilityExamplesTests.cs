@@ -58,9 +58,8 @@ public class LoggingExampleTests
     public void SuspiciousLoginsAreLoggedAndForwarded()
     {
         var provider = new CapturingLoggerProvider();
-        // not disposed: config.Logger becomes Streamiz's process-wide logger factory, which later streams
-        // (and the other tests of this process) keep using
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(provider));
+        // disposed after the driver (declared first, disposed last)
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(provider));
 
         using var driver = TestDrivers.For(new LoggingExample(loggerFactory));
         var logins = driver.CreateInputTopic<string, string>("logins");

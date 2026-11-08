@@ -82,6 +82,8 @@ namespace Streamiz.Kafka.Net.Mock
         private readonly CancellationTokenSource tokenSource = new();
         private readonly InternalTopologyBuilder topologyBuilder;
         private readonly IStreamConfig configuration;
+        private readonly Microsoft.Extensions.Logging.ILoggerFactory loggerFactory;
+        private readonly Microsoft.Extensions.Logging.ILoggerFactory previousLoggerFactory;
         private readonly IStreamConfig topicConfiguration;
 
         private readonly IDictionary<string, IPipeInput> inputs = new Dictionary<string, IPipeInput>();
@@ -111,7 +113,8 @@ namespace Streamiz.Kafka.Net.Mock
 
         internal TopologyTestDriver(InternalTopologyBuilder builder, IStreamConfig config, Mode mode, IKafkaSupplier supplier = null)
         {
-            Logger.LoggerFactory = config.Logger;
+            loggerFactory = config.Logger;
+            previousLoggerFactory = Logger.Use(loggerFactory);
             topologyBuilder = builder;
             configuration = config;
 
@@ -170,6 +173,8 @@ namespace Streamiz.Kafka.Net.Mock
                 k.Value.Dispose();
             
             behavior.Dispose();
+            // the logger factory of this driver's configuration is not used by later streams once it's disposed
+            Logger.Restore(loggerFactory, previousLoggerFactory);
         }
 
         /// <summary>

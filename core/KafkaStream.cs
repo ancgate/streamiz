@@ -297,6 +297,8 @@ namespace Streamiz.Kafka.Net
         private readonly StatestoreRestoreManager statestoreRestoreManager;
 
         private readonly CancellationTokenSource _cancelSource = new();
+        private readonly ILoggerFactory loggerFactory;
+        private readonly ILoggerFactory previousLoggerFactory;
         private readonly SequentiallyGracefullyShutdownHook shutdownHook;
         private readonly Guid processId;
         private readonly StreamsMetadataManager metadataManager;
@@ -336,7 +338,8 @@ namespace Streamiz.Kafka.Net
             this.topology = topology;
             this.kafkaSupplier = kafkaSupplier;
             this.configuration = configuration;
-            Logger.LoggerFactory = configuration.Logger;
+            loggerFactory = configuration.Logger;
+            previousLoggerFactory = Logger.Use(loggerFactory);
             statestoreRestoreManager = new StatestoreRestoreManager(this);
             
             logger = Logger.GetLogger(typeof(KafkaStream));
@@ -608,6 +611,8 @@ namespace Streamiz.Kafka.Net
             Close();
             _cancelSource.Dispose();
             _disposed = true;
+            // the logger factory of this stream's configuration is not used by later streams once it's disposed
+            Logger.Restore(loggerFactory, previousLoggerFactory);
         }
 
         /// <summary>

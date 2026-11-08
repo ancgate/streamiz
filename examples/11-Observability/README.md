@@ -15,7 +15,7 @@ Streamiz logs through Microsoft.Extensions.Logging: set `config.Logger` to your 
 
 `logins`: `bob` → `BR` → `suspicious-logins`: `bob` → `BR`, and the warning `Login of bob from BR (partition 0, offset 1)`.
 
-`config.Logger` becomes Streamiz's process-wide logger factory: don't dispose it while streams of the process are still running.
+Streamiz uses `config.Logger` while the stream runs: dispose the factory after disposing the `KafkaStream`.
 
 ## prometheus-metrics
 
