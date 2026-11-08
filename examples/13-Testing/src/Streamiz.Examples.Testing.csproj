@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The topologies under test. In your project, this is your application (or a library of topologies). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\core\Streamiz.Kafka.Net.csproj" />
+  </ItemGroup>
+
+</Project>
