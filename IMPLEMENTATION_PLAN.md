@@ -494,6 +494,11 @@ Writing the `examples/` folder, which has 142 tests across 13 groups, turned up 
 | `RetryPolicy.NumberOfRetry(n)` counted attempts | It now means n retries after the first attempt. **Behaviour change:** one more call than before. |
 | The `DeserializationExceptionHandler` was called twice per bad record | The timestamp-extraction path no longer calls the handler, and doesn't deserialize at all for the built-in extractors. |
 
+**Found by the real-world scenarios (`examples/14-RealWorld`):**
+- **Fixed:** `builder.Table(topic, materialized)` and `GlobalTable(topic, materialized)` read the topic with the config's default serdes, ignoring the serdes given on the `Materialized`. They now fall back to the `Materialized` serdes, as Kafka Streams does. Regression tests: `TableMaterializedSerdesTests`.
+- **Open (test driver performance):** reading a large output topic gets slower as the topic grows. Each read copies the topic's whole history twice (`SyncProducer.GetHistory` called from `SyncConsumer.ConsumeInternal`), so reading N records costs O(N²).
+- **Open (test driver):** creating the same input or output topic twice in one driver throws.
+
 **Behaviour difference from Kafka:** left and outer stream-stream joins emit an unmatched record as soon as it arrives, with null for the other side. Kafka 3.x waits until the join window closes.
 
 **API gaps:**
