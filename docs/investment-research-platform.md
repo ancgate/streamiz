@@ -8,7 +8,7 @@ One shared data platform feeding five research workloads:
 4. Correlation studies against FRED economic series
 5. Machine-learning studies for FX, forwards, OTC products and commodities, using CME data
 
-This is a research platform, not a trading system. Its outputs are rankings, target portfolios, fund shortlists, correlation reports and study results, reviewed by people. Data comes from licensed LSEG, CME and Wolfe Research feeds plus public sources (FRED, SEC EDGAR, Kenneth French's Data Library, CFTC).
+This is a research platform, not a trading system. Its outputs are rankings, target portfolios, fund shortlists, correlation reports and study results, reviewed by people. Data comes from licensed LSEG (including Lipper fund data), CME, CRSP, Morningstar and Wolfe Research sources, plus public sources (FRED, SEC EDGAR, Kenneth French's Data Library, CFTC).
 
 Status: design, 2026-11-10. Component facts were checked against the projects' repositories on that date.
 
@@ -18,10 +18,10 @@ Status: design, 2026-11-10. Component facts were checked against the projects' r
 
 | Workload | Question it answers | Main data | Sharpe phases used | Output |
 |---|---|---|---|---|
-| Stock selection | Which stocks rank best on price, fundamental, risk and research signals? | LSEG prices, SEC EDGAR fundamentals, Wolfe Research views, Fama-French factors | 1, 2, 3, 5a | Ranked list with the reasons behind each pick |
-| Long-only portfolio with rebalancing | How much of each selected stock, and when to rebalance? | Selection output, LSEG prices, research views | 3, 5a, 5c | Target weights, rebalance schedule, backtested results |
-| Mutual fund selection | Which funds deserve a place, and in what mix? | SEC N-PORT and N-CSR, LSEG fund data (Lipper), NAV history, factors | 3, 5a, 5b | Fund shortlist, fund mix, overlap and style report |
-| Correlation with FRED | How do assets and portfolios move with economic series, and with what lead or lag? | FRED and ALFRED, LSEG prices, CME settlements | 3, 8 (codependence), Charts | Correlation and lead-lag report |
+| Stock selection | Which stocks rank best on price, fundamental, risk and research signals? | LSEG prices, CRSP stock history, SEC EDGAR fundamentals, Morningstar equity data, Wolfe Research views, Fama-French factors | 1, 2, 3, 5a | Ranked list with the reasons behind each pick |
+| Long-only portfolio with rebalancing | How much of each selected stock, and when to rebalance? | Selection output, LSEG prices, CRSP history for backtests, research views | 3, 5a, 5c | Target weights, rebalance schedule, backtested results |
+| Mutual fund selection | Which funds deserve a place, and in what mix? | CRSP Survivor-Bias-Free US Mutual Fund data, LSEG Lipper, Morningstar, SEC N-PORT and N-CSR, factors | 3, 5a, 5b | Fund shortlist, fund mix, overlap and style report |
+| Correlation with FRED | How do assets and portfolios move with economic series, and with what lead or lag? | FRED and ALFRED, LSEG prices, CRSP indexes, CME settlements | 3, 8 (codependence), Charts | Correlation and lead-lag report |
 | ML studies (FX, forwards, OTC, commodities) | Which features predict moves in these markets, and how reliably? | CME futures and options, LSEG FX spot and forward points, FRED, CFTC positioning | 6, 7, 8 | Study reports with validated results |
 
 ---
@@ -53,6 +53,8 @@ flowchart LR
         FRED[FRED / ALFRED API]
         SEC[SEC EDGAR]
         WOLFE[Wolfe Research]
+        CRSP[CRSP stock and<br/>mutual fund files]
+        MS[Morningstar JSON API]
         PUB[Kenneth French,<br/>CFTC COT]
     end
 
@@ -86,7 +88,9 @@ flowchart LR
     K --> PIT
     LSEGH --> ETL
     CMEH --> ETL
+    CRSP --> ETL
     ETL --> PIT
+    MS --> API
     FRED --> API
     SEC --> API
     PUB --> API
@@ -103,7 +107,9 @@ flowchart LR
 | Source | What it provides here | How it is read |
 |---|---|---|
 | LSEG real-time | Live equity, FX spot and FX forward-point quotes | LSEG Real-Time SDK, C# edition (EMA over ETA; open source, Apache-2.0, targets .NET 8 and runs in a .NET 10 host) |
-| LSEG history and fund data | Tick and bar history for backfills; fund data (Lipper classifications, NAV and return history, fund metadata) | LSEG file deliveries and APIs covered by your license; files loaded with Cinchoo ETL |
+| LSEG history and Lipper | Tick and bar history for backfills; Lipper fund data (classifications, peer groups, NAV and return history, fund metadata) | LSEG file deliveries and APIs; files loaded with Cinchoo ETL |
+| CRSP | US stock history (daily and monthly returns including delisting returns, prices, shares outstanding, distributions, PERMNO and PERMCO identifiers), CRSP market indexes, and the Survivor-Bias-Free US Mutual Fund database (returns, NAV, net assets, expense ratios, holdings, dead and merged funds) | CRSP file deliveries loaded with Cinchoo ETL into the store; a Sharpe `CrspProvider` reads them back |
+| Morningstar | Fund and equity data covered by your license, for example categories, star and analyst ratings, style box, fees, managers, holdings and returns | Morningstar's JSON API, through a typed Sharpe `MorningstarProvider` generated from your Morningstar JSON documentation; credentials supplied by each user |
 | CME real-time | Futures and options quotes and trades | CME's real-time feeds covered by your license (MDP 3.0 multicast, which uses SBE encoding, or CME Smart Stream on Google Cloud); an adapter decodes messages into typed records |
 | CME DataMine | Historical ticks, market depth, settlements, volume and open interest | Files loaded with Cinchoo ETL |
 | FRED and ALFRED | Economic series, plus ALFRED's vintages (what each series looked like on a past date) | Sharpe FRED provider; each user supplies their own free FRED API key, as with EIA |
@@ -123,8 +129,8 @@ Both paths write to the same point-in-time store.
 
 Every workload needs to join data from different sources, so one security master maps every identifier:
 
-- Equities: LSEG RIC, ticker, ISIN, SEC CIK, sector, currency.
-- Funds: SEC series and class IDs, ticker, LSEG (Lipper) fund ID, share-class attributes.
+- Equities: LSEG RIC, ticker, ISIN, CUSIP, SEC CIK, CRSP PERMNO and PERMCO, Morningstar security ID, sector, currency.
+- Funds: SEC series and class IDs, ticker, CUSIP, Lipper fund ID, CRSP fund number, Morningstar fund and share-class IDs, share-class attributes.
 - CME contracts: product code, contract month, expiry and roll dates, tick size and multiplier, underlying.
 - FRED series: series ID, frequency, units, seasonal adjustment, release schedule.
 
@@ -135,7 +141,8 @@ It is loaded with Cinchoo ETL from your reference files and kept as a compacted 
 - Parquet files on object storage, partitioned by dataset and date. A time-series database can be added later if interactive tick queries are needed.
 - **Two timestamps on every record:** when the event happened, and when the platform could have known it. Studies always filter on the second. Examples: fundamentals become known on the SEC filing's acceptance date; a FRED value becomes known on its release date; a research view becomes known when the report arrived.
 - **FRED vintages:** economic data is revised. ALFRED keeps each past vintage, so a study can use the GDP figure as first published rather than today's revised number.
-- **Survivorship:** delisted stocks, merged or closed funds, and expired contracts stay in the store.
+- **Survivorship:** delisted stocks, merged or closed funds, and expired contracts stay in the store. CRSP is the base for history because it was built for this: stock returns include delisting returns, and the mutual fund database keeps dead and merged funds.
+- **One source of record per field, cross-checked by the others:** when several vendors supply the same thing (fund returns from CRSP, Lipper and Morningstar; stock returns from CRSP and LSEG), the store marks one as the source of record and a daily job compares the rest. Differences beyond a tolerance go to a reconciliation report instead of being silently averaged.
 
 ### 3.5 Kafka and Streamiz (live data only)
 
@@ -197,12 +204,13 @@ Equity views feed stock selection (4.1) and the portfolio's Black-Litterman view
 
 ### 4.1 Stock selection
 
-1. **Universe:** listed equities passing liquidity, price and coverage filters, delisted names included.
+1. **Universe:** listed equities passing liquidity, price and coverage filters, delisted names included. History and backtests use CRSP returns (with delisting returns); current data comes from LSEG.
 2. **Signals,** all point-in-time:
    - Price: 12-month momentum skipping the last month, short-term reversal, trend and volatility from Sharpe indicators.
    - Fundamentals from SEC EDGAR: quality (profitability, accruals, Piotroski F-score), value (earnings and free-cash-flow yields), growth, balance-sheet risk.
    - Risk and factors: beta, idiosyncratic volatility, Fama-French exposures.
    - Research: approved Wolfe Research views (direction, price-target upside, conviction), decayed over time and weighted by track record.
+   - Morningstar equity data your license covers (for example fair value estimates or moat ratings), tested as signals like any other.
    - Macro sensitivity: exposures to FRED series found useful in 4.4.
 3. **Normalize:** cross-sectional ranks or winsorized z-scores, neutral by sector.
 4. **Combine:** equal weights across signal families to start; weights based on measured predictive power (information coefficient) only after walk-forward tests, shrunk toward equal.
@@ -223,19 +231,26 @@ Equity views feed stock selection (4.1) and the portfolio's Black-Litterman view
 
 ### 4.3 Mutual fund selection (long only)
 
-- **Universe:** SEC's fund ticker list joined with LSEG fund data (Lipper classification). Keep one share class per fund (for example the cheapest class available to you), and keep closed and merged funds for history.
-- **Filters:** track record length, assets, expense ratio, classification.
-- **Performance and risk** (Sharpe phase 3): returns against the Lipper peer group and a benchmark; Sharpe, Sortino and information ratios; up- and down-market capture; maximum drawdown.
+- **Data roles:**
+  - CRSP Survivor-Bias-Free US Mutual Fund database: the base for all history (returns, net assets, fees, dead and merged funds), so persistence and alpha studies are not flattered by survivors only.
+  - Lipper: classifications and peer groups, plus current data.
+  - Morningstar: categories, star and analyst ratings, style box, manager data and fees.
+  - SEC N-PORT and N-CSR: holdings, and costs and returns as filed.
+  - Funds are linked across sources through the security master (CUSIP, tickers, SEC class IDs, CRSP fund number, Lipper and Morningstar IDs), and the reconciliation report flags return and fee differences.
+- **Universe:** every fund in CRSP, current and dead, joined with Lipper and Morningstar. Keep one share class per fund for ranking (for example the cheapest class available to you).
+- **Filters:** track record length, assets, expense ratio, Lipper classification or Morningstar category.
+- **Performance and risk** (Sharpe phase 3): returns against the Lipper peer group, the Morningstar category and a benchmark; Sharpe, Sortino and information ratios; up- and down-market capture; maximum drawdown.
+- **Vendor ratings as evidence, not answers:** Morningstar star and analyst ratings are shown in the report and tested as predictors of future fund performance, but the ranking does not simply copy them.
 - **Skill versus factors:** Fama-French and momentum alpha with its t-statistic, rolling over time.
 - **Style:** returns-based style analysis (a long-only regression of fund returns on style index returns, solved with Sharpe's optimizer) and holdings-based style from N-PORT.
 - **Holdings:** active share against the benchmark, concentration, and overlap between candidate funds (from N-PORT positions).
-- **Costs and persistence:** expense ratios from the shareholder reports (N-CSR), and whether past rank predicts future rank.
+- **Costs and persistence:** expense ratios from CRSP and the shareholder reports (N-CSR), and whether past rank predicts future rank, measured on the survivor-bias-free CRSP history.
 - **Fund mix:** long-only optimization across the shortlisted funds (minimum variance or HRP, with limits per fund and a penalty for holdings overlap).
 - **Report:** ranked shortlist with the evidence per fund, and the proposed mix with its combined holdings and factor exposures.
 
 ### 4.4 Correlation with FRED series
 
-- **Align frequencies:** resample prices and returns to each series' frequency (for example month-end for monthly series) before comparing.
+- **Align frequencies:** resample prices and returns to each series' frequency (for example month-end for monthly series) before comparing. CRSP market and size-decile indexes serve as long-history market proxies.
 - **Make series comparable:** use changes rather than levels (log returns, percentage or first differences); fractional differentiation (phase 8) where some memory must be kept.
 - **Use what was known at the time:** FRED release dates and ALFRED vintages, so a correlation does not rely on data revised later.
 - **Measures:** Pearson, Spearman and Kendall correlation; distance correlation and mutual information for non-linear links (phase 8 codependence); rolling correlation to see stability; lead-lag cross-correlation to see which side moves first.
@@ -296,13 +311,13 @@ The same code processes live data and history: studies replay archived topics or
 
 | Stage | Platform work | Workload unlocked | Needs from Sharpe |
 |---|---|---|---|
-| 0 | Security master, point-in-time store, Cinchoo ETL loaders, FRED and SEC providers | — | Phase 0, 2 |
+| 0 | Security master, point-in-time store, Cinchoo ETL loaders, FRED, SEC and CRSP providers, vendor reconciliation report | — | Phase 0, 2 |
 | 1 | FRED correlation studies on daily and monthly data | 4.4 Correlation | Phase 3 metrics; the FRED provider is needed early, so it moves forward from 5b |
 | 2 | LSEG adapter, Kafka and Streamiz bars and indicators | — | Phase 1 (v0.1) |
 | 3 | Research agent with review queue | — | none (Claude API) |
 | 4 | Stock selection | 4.1 | Phases 1–3 |
 | 5 | Long-only portfolio and rebalancing | 4.2 | Phase 5a (v0.5), 5c (v1.0) |
-| 6 | Fund data (N-PORT, N-CSR, Lipper) and fund selection | 4.3 | Phase 5b (v0.6) |
+| 6 | Fund data (CRSP mutual funds, Lipper, Morningstar provider, N-PORT, N-CSR) and fund selection | 4.3 | Phase 5b (v0.6) |
 | 7 | CME adapter and DataMine loaders; FX and commodity curves | — | Phase 6 (v1.1), 7 (v1.2) |
 | 8 | ML studies | 4.5 | Phase 8 (v1.3) |
 
@@ -318,3 +333,5 @@ The same code processes live data and history: studies replay archived topics or
 | Store | Parquet only, or Parquet plus a time-series database | Parquet first |
 | Study registry | A simple table in the store, or a dedicated experiment tracker | Start with a table; move to a tracker if studies multiply |
 | Fund share class | Cheapest class, institutional class, or all classes | One class per fund for ranking, all classes kept for reference |
+| Source of record per field | For example, fund returns from CRSP, Lipper or Morningstar | CRSP for history; Lipper and Morningstar for current data, classifications and ratings; the others cross-check |
+| Morningstar client | Hand-written, or generated from your Morningstar JSON documentation | Generated: a `tools/morningstar-codegen` step reads the JSON documentation and produces typed C# requests and records, as `eia-codegen` does for EIA |
